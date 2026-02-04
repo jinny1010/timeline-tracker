@@ -1,0 +1,214 @@
+/* Lorebook Organizer Styles */
+
+/* 트리거 버튼 공통 */
+.lo-trigger-btn {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.lo-trigger-btn:hover {
+    color: var(--SmartThemeQuoteColor);
+    transform: scale(1.1);
+}
+
+.lo-trigger-btn i {
+    font-size: 1.2em;
+}
+
+/* 입력창 옆 버튼 */
+.lo-btn-input {
+    padding: 8px 12px;
+    margin-right: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 5px;
+}
+
+/* 사이드바 버튼 */
+.lo-btn-sidebar {
+    width: 35px;
+    height: 35px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 50%;
+    margin: 5px;
+}
+
+/* 설정 패널 */
+.lo-settings {
+    margin-top: 10px;
+}
+
+.lo-setting-item {
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lo-setting-item label {
+    font-weight: 500;
+}
+
+.lo-setting-item select,
+.lo-setting-item input[type="number"] {
+    padding: 5px 10px;
+    border-radius: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+/* 로어북 선택 팝업 */
+.lo-selector-popup {
+    padding: 10px;
+}
+
+.lo-selector-popup h3 {
+    margin-bottom: 15px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.lo-entry-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.lo-entry-item {
+    padding: 12px 15px;
+    margin: 5px 0;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lo-entry-item:hover {
+    background: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+.lo-entry-title {
+    font-weight: 600;
+    font-size: 1.05em;
+}
+
+.lo-entry-keys {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+/* 스토리 유형 선택 */
+.lo-story-type-popup {
+    padding: 10px;
+}
+
+.lo-story-type-popup h3 {
+    margin-bottom: 15px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.lo-story-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.lo-radio-option {
+    padding: 15px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    transition: all 0.2s ease;
+}
+
+.lo-radio-option:hover {
+    background: var(--SmartThemeBorderColor);
+}
+
+.lo-radio-option input[type="radio"] {
+    margin-right: 10px;
+}
+
+.lo-radio-option span {
+    font-weight: 600;
+}
+
+.lo-radio-option small {
+    opacity: 0.7;
+    margin-left: 25px;
+}
+
+/* 편집 모달 */
+.lo-edit-modal {
+    padding: 10px;
+}
+
+.lo-edit-modal h3 {
+    margin-bottom: 10px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.lo-edit-hint {
+    font-size: 0.9em;
+    opacity: 0.8;
+    margin-bottom: 15px;
+    padding: 8px;
+    background: rgba(255, 193, 7, 0.1);
+    border-radius: 5px;
+    border-left: 3px solid #ffc107;
+}
+
+.lo-keywords-section,
+.lo-content-section {
+    margin: 15px 0;
+}
+
+.lo-keywords-section label,
+.lo-content-section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.lo-keywords-section input,
+.lo-content-section textarea {
+    width: 100%;
+    padding: 10px;
+    border-radius: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    font-family: inherit;
+}
+
+.lo-content-section textarea {
+    min-height: 300px;
+    resize: vertical;
+}
+
+/* 스크롤바 스타일 */
+.lo-entry-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.lo-entry-list::-webkit-scrollbar-track {
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 4px;
+}
+
+.lo-entry-list::-webkit-scrollbar-thumb {
+    background: var(--SmartThemeBorderColor);
+    border-radius: 4px;
+}
+
+.lo-entry-list::-webkit-scrollbar-thumb:hover {
+    background: var(--SmartThemeQuoteColor);
+}
