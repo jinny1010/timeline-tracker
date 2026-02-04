@@ -186,13 +186,15 @@ function getWorldInfoList() {
  */
 async function getWorldInfoData(worldName) {
     try {
+        console.log('[LO] Fetching world info for:', worldName);
         const data = await loadWorldInfo(worldName);
-        console.log('[LO] Loaded world info for', worldName, ':', data);
+        console.log('[LO] Loaded world info for', worldName, '- entries:', data?.entries ? Object.keys(data.entries).length : 0);
         return data;
     } catch (error) {
         console.error('[LO] Error getting world info:', error);
+        toastr.error('로어북 로드 실패: ' + (error.message || '알 수 없는 오류'));
+        return null;
     }
-    return null;
 }
 
 /**
@@ -237,39 +239,72 @@ async function openLorebookSelector() {
             </div>
             
             <div id="lo_entries_container" style="max-height:300px; overflow-y:auto; border:1px solid var(--SmartThemeBorderColor); border-radius:5px; padding:10px; background:var(--SmartThemeBlurTintColor);">
-                <p style="text-align:center; opacity:0.7;">로어북을 선택하면 항목이 표시됩니다...</p>
+                <p style="text-align:center; opacity:0.7;">로딩 중...</p>
             </div>
         </div>
     `;
     
-    // 로어북 선택 변경 이벤트
-    $(document).off('change', '#lo_world_select').on('change', '#lo_world_select', async function() {
+    // 기존 이벤트 완전히 제거
+    $(document).off('change.lorebookOrganizer');
+    $(document).off('click.lorebookOrganizer');
+    
+    // 로어북 선택 변경 이벤트 (namespace 사용)
+    $(document).on('change.lorebookOrganizer', '#lo_world_select', async function() {
         const worldName = $(this).val();
+        console.log('[LO] World select changed to:', worldName);
         await loadWorldInfoEntries(worldName);
     });
     
-    // 엔트리 클릭 이벤트
-    $(document).off('click', '.lo-entry-item').on('click', '.lo-entry-item', async function() {
-        const uid = $(this).data('uid');
-        const isTimeline = $(this).data('is-timeline') === true || $(this).data('is-timeline') === 'true';
+    // 엔트리 클릭 이벤트 (namespace 사용)
+    $(document).on('click.lorebookOrganizer', '.lo-entry-item', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const $this = $(this);
+        if ($this.hasClass('lo-processing')) return; // 중복 클릭 방지
+        $this.addClass('lo-processing');
+        
+        const uid = $this.data('uid');
+        const isTimeline = $this.data('is-timeline') === true || $this.data('is-timeline') === 'true';
         const worldName = $('#lo_world_select').val();
         
-        // 팝업 닫기
-        $('#dialogue_popup_ok').trigger('click');
+        console.log('[LO] Entry clicked:', uid, 'isTimeline:', isTimeline);
         
         const entry = currentEntries.find(e => String(e.uid) === String(uid));
         
         if (entry) {
+            // 팝업 닫기
+            $('#dialogue_popup_ok').trigger('click');
+            
+            // 약간의 딜레이 후 처리 (팝업 닫히는 것 대기)
+            await sleep(200);
             await processSelectedEntry(entry, isTimeline, worldName);
         }
+        
+        $this.removeClass('lo-processing');
     });
     
-    // 팝업 열리면 바로 로드 (setTimeout으로 DOM 렌더링 대기)
-    setTimeout(async () => {
-        await loadWorldInfoEntries(defaultWorld);
-    }, 100);
+    // 팝업 먼저 표시
+    const popupPromise = getCallPopup()(popupContent, 'text', '', { wide: true });
     
-    await getCallPopup()(popupContent, 'text', '', { wide: true });
+    // DOM이 렌더링된 후 로드 (requestAnimationFrame 사용)
+    requestAnimationFrame(() => {
+        setTimeout(async () => {
+            console.log('[LO] Starting to load entries for:', defaultWorld);
+            try {
+                await loadWorldInfoEntries(defaultWorld);
+            } catch (err) {
+                console.error('[LO] Error loading entries:', err);
+                $('#lo_entries_container').html('<p style="text-align:center; color:red;">로드 실패</p>');
+            }
+        }, 150);
+    });
+    
+    await popupPromise;
+    
+    // 팝업 닫힐 때 이벤트 정리
+    $(document).off('change.lorebookOrganizer');
+    $(document).off('click.lorebookOrganizer');
 }
 
 /**
@@ -277,39 +312,84 @@ async function openLorebookSelector() {
  */
 async function loadWorldInfoEntries(worldName) {
     const container = $('#lo_entries_container');
+    
+    if (!container.length) {
+        console.error('[LO] Container not found');
+        return;
+    }
+    
     container.html('<p style="text-align:center; opacity:0.7;">로딩 중...</p>');
     
-    const worldData = await getWorldInfoData(worldName);
-    
-    if (!worldData || !worldData.entries) {
-        container.html('<p style="text-align:center; opacity:0.7;">항목이 없습니다.</p>');
-        return;
-    }
-    
-    currentLoreBook = worldName;
-    currentEntries = Object.values(worldData.entries);
-    
-    if (currentEntries.length === 0) {
-        container.html('<p style="text-align:center; opacity:0.7;">항목이 없습니다.</p>');
-        return;
-    }
-    
-    let html = '';
-    currentEntries.forEach((entry) => {
-        const title = entry.comment || entry.key?.[0] || `Entry ${entry.uid}`;
-        const isTimeline = title.toLowerCase().includes('timeline');
-        const keys = Array.isArray(entry.key) ? entry.key : (entry.key ? [entry.key] : []);
+    try {
+        console.log('[LO] Loading world info for:', worldName);
         
-        html += `
-            <div class="lo-entry-item" data-uid="${entry.uid}" data-is-timeline="${isTimeline}" 
-                 style="padding:12px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                <div style="font-weight:600;">${isTimeline ? '📅 ' : ''}${title}</div>
-                <div style="font-size:0.85em; opacity:0.7; margin-top:3px;">${keys.slice(0, 3).join(', ')}</div>
-            </div>
-        `;
-    });
-    
-    container.html(html);
+        // 비동기 작업 전에 UI 업데이트 허용
+        await sleep(50);
+        
+        const worldData = await getWorldInfoData(worldName);
+        
+        console.log('[LO] World data received:', worldData ? 'OK' : 'NULL');
+        
+        if (!worldData || !worldData.entries) {
+            container.html('<p style="text-align:center; opacity:0.7;">항목이 없습니다.</p>');
+            return;
+        }
+        
+        currentLoreBook = worldName;
+        currentEntries = Object.values(worldData.entries);
+        
+        console.log('[LO] Entries count:', currentEntries.length);
+        
+        if (currentEntries.length === 0) {
+            container.html('<p style="text-align:center; opacity:0.7;">항목이 없습니다.</p>');
+            return;
+        }
+        
+        // HTML 생성을 청크로 분할하여 UI 블로킹 방지
+        let html = '';
+        const chunkSize = 50;
+        
+        for (let i = 0; i < currentEntries.length; i++) {
+            const entry = currentEntries[i];
+            const title = entry.comment || entry.key?.[0] || `Entry ${entry.uid}`;
+            const isTimeline = title.toLowerCase().includes('timeline');
+            const keys = Array.isArray(entry.key) ? entry.key : (entry.key ? [entry.key] : []);
+            
+            // HTML 이스케이프
+            const safeTitle = escapeHtml(title);
+            const safeKeys = keys.slice(0, 3).map(k => escapeHtml(k)).join(', ');
+            
+            html += `
+                <div class="lo-entry-item" data-uid="${entry.uid}" data-is-timeline="${isTimeline}" 
+                     style="padding:12px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor); transition: background 0.2s;">
+                    <div style="font-weight:600;">${isTimeline ? '📅 ' : ''}${safeTitle}</div>
+                    <div style="font-size:0.85em; opacity:0.7; margin-top:3px;">${safeKeys}</div>
+                </div>
+            `;
+            
+            // 청크마다 UI 업데이트 기회 제공
+            if (i > 0 && i % chunkSize === 0) {
+                await sleep(0);
+            }
+        }
+        
+        container.html(html);
+        console.log('[LO] Entries rendered');
+        
+    } catch (error) {
+        console.error('[LO] Error in loadWorldInfoEntries:', error);
+        container.html('<p style="text-align:center; color:red;">로드 중 오류 발생</p>');
+    }
+}
+
+/**
+ * HTML 이스케이프 함수
+ */
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 /**
