@@ -264,14 +264,12 @@ async function openLorebookSelector() {
         }
     });
     
-    await getCallPopup()(popupContent, 'text', '', { wide: true });
+    // 팝업 열리면 바로 로드 (setTimeout으로 DOM 렌더링 대기)
+    setTimeout(async () => {
+        await loadWorldInfoEntries(defaultWorld);
+    }, 100);
     
-    // 초기 로드
-    if (charLorebook) {
-        await loadWorldInfoEntries(charLorebook);
-    } else if (worldInfos.length > 0) {
-        await loadWorldInfoEntries(worldInfos[0]);
-    }
+    await getCallPopup()(popupContent, 'text', '', { wide: true });
 }
 
 /**
