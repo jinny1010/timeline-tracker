@@ -1,191 +1,201 @@
-.style-cloner-container {
-    margin-bottom: 10px;
-}
+/* Lorebook Organizer Styles */
 
-.style-cloner-info {
-    background: rgba(74, 158, 255, 0.1);
-    border-left: 3px solid var(--SmartThemeQuoteColor, #4a9eff);
-    padding: 10px 12px;
-    margin-bottom: 15px;
-    border-radius: 0 5px 5px 0;
-    font-size: 13px;
-    line-height: 1.5;
-}
-
-.style-cloner-info i {
-    margin-right: 5px;
-    color: var(--SmartThemeQuoteColor, #4a9eff);
-}
-
-.style-cloner-section {
-    margin: 15px 0;
-}
-
-.style-cloner-label {
-    display: block;
-    margin-bottom: 8px;
-    font-weight: bold;
-    font-size: 13px;
-}
-
-.style-cloner-label i {
-    margin-right: 5px;
-    opacity: 0.8;
-}
-
-.style-cloner-input-group {
+/* 입력창 옆 버튼 */
+.lo-input-btn {
+    cursor: pointer;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+    margin-right: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 5px;
+    transition: all 0.2s ease;
+}
+
+.lo-input-btn:hover {
+    color: var(--SmartThemeQuoteColor);
+    transform: scale(1.1);
+}
+
+.lo-input-btn i {
+    font-size: 1.2em;
+}
+
+/* 설정 패널 */
+.lo-settings {
+    margin-top: 10px;
+}
+
+.lo-setting-item {
+    margin: 10px 0;
+    display: flex;
+    flex-direction: column;
     gap: 5px;
 }
 
-.style-cloner-input-group input {
-    flex: 1;
+.lo-setting-item label {
+    font-weight: 500;
 }
 
-.style-cloner-input-group button {
-    padding: 0 12px;
-}
-
-.style-cloner-hint {
-    display: block;
-    margin-top: 5px;
-    font-size: 12px;
-    opacity: 0.7;
-}
-
-.style-cloner-hint a {
-    color: var(--SmartThemeQuoteColor, #4a9eff);
-}
-
-.style-cloner-divider {
-    border: none;
-    border-top: 1px solid var(--SmartThemeBorderColor);
-    margin: 20px 0;
-}
-
-/* 업로드 영역 */
-.style-cloner-upload-area {
-    border: 2px dashed var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    padding: 20px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-height: 120px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--SmartThemeBlurTintColor);
-}
-
-.style-cloner-upload-area:hover {
-    border-color: var(--SmartThemeQuoteColor, #4a9eff);
-    background: rgba(74, 158, 255, 0.05);
-}
-
-.style-cloner-upload-area.dragover {
-    border-color: var(--SmartThemeQuoteColor, #4a9eff);
-    background: rgba(74, 158, 255, 0.1);
-}
-
-#style_cloner_upload_placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    opacity: 0.7;
-}
-
-#style_cloner_upload_placeholder i {
-    font-size: 32px;
-}
-
-#style_cloner_upload_placeholder span {
-    font-size: 13px;
-}
-
-#style_cloner_ref_preview {
-    max-width: 100%;
-    max-height: 200px;
+.lo-setting-item select,
+.lo-setting-item input[type="number"] {
+    padding: 5px 10px;
     border-radius: 5px;
-}
-
-.style-cloner-upload-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 10px;
-}
-
-.style-cloner-upload-actions button {
-    flex: 1;
-}
-
-/* 생성 버튼 */
-.style-cloner-generate-btn {
-    width: 100%;
-    padding: 12px !important;
-    font-size: 14px !important;
-    margin-top: 10px;
-    background: linear-gradient(135deg, #4a9eff 0%, #7b68ee 100%) !important;
-    border: none !important;
-}
-
-.style-cloner-generate-btn:hover:not(:disabled) {
-    filter: brightness(1.1);
-}
-
-.style-cloner-generate-btn:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-}
-
-/* 결과 영역 */
-.style-cloner-result-area {
     background: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    padding: 15px;
-    text-align: center;
-    min-height: 150px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 15px;
+    color: var(--SmartThemeBodyColor);
 }
 
-.style-cloner-result-placeholder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    opacity: 0.5;
+/* 로어북 선택 팝업 */
+.lo-selector-popup {
+    padding: 10px;
 }
 
-.style-cloner-result-placeholder i {
-    font-size: 40px;
+.lo-selector-popup h3 {
+    margin-bottom: 15px;
+    color: var(--SmartThemeQuoteColor);
 }
 
-.style-cloner-result-placeholder span {
-    font-size: 13px;
-}
-
-#style_cloner_result_img {
-    max-width: 100%;
+.lo-entry-list {
     max-height: 400px;
+    overflow-y: auto;
+}
+
+.lo-entry-item {
+    padding: 12px 15px;
+    margin: 5px 0;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lo-entry-item:hover {
+    background: var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeBodyColor);
+}
+
+.lo-entry-title {
+    font-weight: 600;
+    font-size: 1.05em;
+}
+
+.lo-entry-keys {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+/* 스토리 유형 선택 */
+.lo-story-type-popup {
+    padding: 10px;
+}
+
+.lo-story-type-popup h3 {
+    margin-bottom: 15px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.lo-story-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.lo-radio-option {
+    padding: 15px;
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    transition: all 0.2s ease;
+}
+
+.lo-radio-option:hover {
+    background: var(--SmartThemeBorderColor);
+}
+
+.lo-radio-option input[type="radio"] {
+    margin-right: 10px;
+}
+
+.lo-radio-option span {
+    font-weight: 600;
+}
+
+.lo-radio-option small {
+    opacity: 0.7;
+    margin-left: 25px;
+}
+
+/* 편집 모달 */
+.lo-edit-modal {
+    padding: 10px;
+}
+
+.lo-edit-modal h3 {
+    margin-bottom: 10px;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.lo-edit-hint {
+    font-size: 0.9em;
+    opacity: 0.8;
+    margin-bottom: 15px;
+    padding: 8px;
+    background: rgba(255, 193, 7, 0.1);
     border-radius: 5px;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    border-left: 3px solid #ffc107;
 }
 
-.style-cloner-download-btn {
-    display: inline-flex !important;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    padding: 8px 16px !important;
+.lo-keywords-section,
+.lo-content-section {
+    margin: 15px 0;
 }
 
-/* hidden 클래스 */
-.hidden {
-    display: none !important;
+.lo-keywords-section label,
+.lo-content-section label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.lo-keywords-section input,
+.lo-content-section textarea {
+    width: 100%;
+    padding: 10px;
+    border-radius: 5px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    font-family: inherit;
+}
+
+.lo-content-section textarea {
+    min-height: 300px;
+    resize: vertical;
+}
+
+/* 스크롤바 스타일 */
+.lo-entry-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.lo-entry-list::-webkit-scrollbar-track {
+    background: var(--SmartThemeBlurTintColor);
+    border-radius: 4px;
+}
+
+.lo-entry-list::-webkit-scrollbar-thumb {
+    background: var(--SmartThemeBorderColor);
+    border-radius: 4px;
+}
+
+.lo-entry-list::-webkit-scrollbar-thumb:hover {
+    background: var(--SmartThemeQuoteColor);
 }
