@@ -1,38 +1,25 @@
 /* Lorebook Organizer Styles */
 
-/* 트리거 버튼 공통 */
-.lo-trigger-btn {
+/* 입력창 옆 버튼 */
+.lo-input-btn {
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
-}
-
-.lo-trigger-btn:hover {
-    color: var(--SmartThemeQuoteColor);
-    transform: scale(1.1);
-}
-
-.lo-trigger-btn i {
-    font-size: 1.2em;
-}
-
-/* 입력창 옆 버튼 */
-.lo-btn-input {
     padding: 8px 12px;
     margin-right: 5px;
     background: var(--SmartThemeBlurTintColor);
     border-radius: 5px;
+    transition: all 0.2s ease;
 }
 
-/* 사이드바 버튼 */
-.lo-btn-sidebar {
-    width: 35px;
-    height: 35px;
-    background: var(--SmartThemeBlurTintColor);
-    border-radius: 50%;
-    margin: 5px;
+.lo-input-btn:hover {
+    color: var(--SmartThemeQuoteColor);
+    transform: scale(1.1);
+}
+
+.lo-input-btn i {
+    font-size: 1.2em;
 }
 
 /* 설정 패널 */
