@@ -1,12 +1,11 @@
 {
-    "display_name": "Lorebook Organizer",
-    "loading_order": 10,
+    "display_name": "Style Cloner",
+    "loading_order": 100,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
     "author": "Jin",
-    "version": "1.0.0",
-    "homePage": "",
-    "auto_update": false
+    "version": "2.0.0",
+    "description": "참조 이미지의 그림체로 새 이미지를 생성합니다 (Gemini API 직접 호출)"
 }
