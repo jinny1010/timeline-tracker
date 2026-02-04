@@ -6,6 +6,7 @@ import {
 } from '../../../../script.js';
 
 import { extension_settings } from '../../../extensions.js';
+import { world_names, loadWorldInfo, saveWorldInfo } from '../../../world-info.js';
 
 // SillyTavern context에서 함수들 가져오기
 const getContext = () => SillyTavern.getContext();
@@ -159,7 +160,7 @@ function addMenuButtons() {
 /**
  * 캐릭터 로어북 가져오기
  */
-async function getCharacterLorebook() {
+function getCharacterLorebook() {
     const ctx = getContext();
     
     if (ctx.characterId === undefined) {
@@ -169,38 +170,15 @@ async function getCharacterLorebook() {
     const character = ctx.characters[ctx.characterId];
     if (!character) return null;
     
-    // 캐릭터에 연결된 로어북 찾기
-    const charLorebook = character.data?.extensions?.world;
-    
-    if (!charLorebook) {
-        // 캐릭터 이름으로 로어북 찾기 시도
-        const charName = character.name;
-        const worldInfos = await getWorldInfoList();
-        const matchedWorld = worldInfos.find(w => w.toLowerCase().includes(charName.toLowerCase()));
-        return matchedWorld || null;
-    }
-    
-    return charLorebook;
+    // 캐릭터에 연결된 로어북
+    return character.data?.extensions?.world || null;
 }
 
 /**
- * World Info 목록 가져오기
+ * World Info 목록 가져오기 (import한 world_names 사용)
  */
-async function getWorldInfoList() {
-    try {
-        const response = await fetch('/api/worldinfo/list', {
-            method: 'GET',
-            headers: getContext().getRequestHeaders(),
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            return data.worlds || [];
-        }
-    } catch (error) {
-        console.error('[LO] Error getting world info list:', error);
-    }
-    return [];
+function getWorldInfoList() {
+    return world_names || [];
 }
 
 /**
@@ -208,15 +186,9 @@ async function getWorldInfoList() {
  */
 async function getWorldInfoData(worldName) {
     try {
-        const response = await fetch('/api/worldinfo/get', {
-            method: 'POST',
-            headers: getContext().getRequestHeaders(),
-            body: JSON.stringify({ name: worldName }),
-        });
-        
-        if (response.ok) {
-            return await response.json();
-        }
+        const data = await loadWorldInfo(worldName);
+        console.log('[LO] Loaded world info for', worldName, ':', data);
+        return data;
     } catch (error) {
         console.error('[LO] Error getting world info:', error);
     }
@@ -229,21 +201,29 @@ async function getWorldInfoData(worldName) {
 async function openLorebookSelector() {
     const ctx = getContext();
     
+    console.log('[LO] Opening selector, characterId:', ctx.characterId);
+    
     if (ctx.characterId === undefined) {
         toastr.warning('캐릭터를 먼저 선택해주세요.');
         return;
     }
     
-    // 모든 World Info 목록 가져오기
-    const worldInfos = await getWorldInfoList();
+    // 캐릭터에 연결된 로어북 확인
+    const charLorebook = getCharacterLorebook();
     
-    if (!worldInfos || worldInfos.length === 0) {
+    // 전체 World Info 목록
+    const worldInfos = getWorldInfoList();
+    
+    console.log('[LO] Character lorebook:', charLorebook);
+    console.log('[LO] All world infos:', worldInfos);
+    
+    if (!charLorebook && (!worldInfos || worldInfos.length === 0)) {
         toastr.warning('사용 가능한 로어북이 없습니다.');
         return;
     }
     
-    // 캐릭터에 연결된 로어북 확인
-    const charLorebook = await getCharacterLorebook();
+    // 캐릭터 로어북이 있으면 그걸 기본으로
+    const defaultWorld = charLorebook || worldInfos[0];
     
     const popupContent = `
         <div style="display:flex; flex-direction:column; gap:15px; min-width:400px;">
@@ -579,13 +559,21 @@ async function openEditModal(content, originalEntry, mode, worldName) {
  */
 async function saveToLorebook(content, keywords, originalEntry, mode, worldName) {
     try {
-        const ctx = getContext();
-        
         if (mode === 'timeline-sub') {
             // 새 로어북 항목 생성
             const keywordArray = keywords.split(',').map(k => k.trim()).filter(k => k);
             
+            // 기존 worldData 가져오기
+            const worldData = await getWorldInfoData(worldName);
+            if (!worldData || !worldData.entries) {
+                throw new Error('로어북 데이터를 찾을 수 없습니다.');
+            }
+            
+            // 새 UID 생성
+            const newUid = Date.now();
+            
             const newEntry = {
+                uid: newUid,
                 key: keywordArray,
                 content: content,
                 comment: `Sub-Story: ${keywordArray[0] || 'Untitled'}`,
@@ -600,21 +588,12 @@ async function saveToLorebook(content, keywords, originalEntry, mode, worldName)
                 useProbability: true,
             };
             
-            // API로 새 항목 생성
-            const response = await fetch('/api/worldinfo/edit', {
-                method: 'POST',
-                headers: ctx.getRequestHeaders(),
-                body: JSON.stringify({
-                    name: worldName,
-                    data: { entries: { [Date.now()]: newEntry } },
-                }),
-            });
+            // entries에 추가
+            worldData.entries[newUid] = newEntry;
             
-            if (response.ok) {
-                toastr.success('서브 스토리가 생성되었습니다.');
-            } else {
-                throw new Error('API 요청 실패');
-            }
+            // 저장
+            await saveWorldInfo(worldName, worldData);
+            toastr.success('서브 스토리가 생성되었습니다.');
             
         } else if (mode === 'timeline-main') {
             // 기존 타임라인에 이어붙이기
@@ -638,8 +617,6 @@ async function saveToLorebook(content, keywords, originalEntry, mode, worldName)
  * World Info 항목 업데이트
  */
 async function updateWorldInfoEntry(worldName, uid, updates) {
-    const ctx = getContext();
-    
     // 기존 데이터 가져오기
     const worldData = await getWorldInfoData(worldName);
     if (!worldData || !worldData.entries) {
@@ -648,12 +625,10 @@ async function updateWorldInfoEntry(worldName, uid, updates) {
     
     // 해당 항목 찾기
     let targetEntry = null;
-    let targetKey = null;
     
     for (const [key, entry] of Object.entries(worldData.entries)) {
         if (String(entry.uid) === String(uid)) {
             targetEntry = entry;
-            targetKey = key;
             break;
         }
     }
@@ -665,19 +640,9 @@ async function updateWorldInfoEntry(worldName, uid, updates) {
     // 업데이트 적용
     Object.assign(targetEntry, updates);
     
-    // 저장
-    const response = await fetch('/api/worldinfo/edit', {
-        method: 'POST',
-        headers: ctx.getRequestHeaders(),
-        body: JSON.stringify({
-            name: worldName,
-            data: worldData,
-        }),
-    });
-    
-    if (!response.ok) {
-        throw new Error('저장 API 요청 실패');
-    }
+    // saveWorldInfo로 저장
+    await saveWorldInfo(worldName, worldData);
+    console.log('[LO] Saved world info:', worldName);
 }
 
 /**
