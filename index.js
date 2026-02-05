@@ -378,7 +378,7 @@ async function generateSubTimeline(lorebookName, entryName, startId, endId, auto
         // 1. Get chat context by ID range
         const chatContext = getChatContextByRange(startId, endId);
         
-        // 2. Generate timeline events via AI
+        // 2. Generate timeline via AI (single entry with multiple events inside)
         const eventData = await generateTimelineViaAI(chatContext, 'sub');
         
         if (!eventData) {
@@ -393,14 +393,17 @@ async function generateSubTimeline(lorebookName, entryName, startId, endId, auto
             return;
         }
         
-        // 4. Create new entry
+        // 4. Create single entry with all events inside
         const uid = Date.now();
         const keywords = autoKeywords ? (eventData.keywords || []) : [];
         
+        // Entry title format: 년도, 날짜 (키워드)
+        const entryTitle = eventData.title || entryName;
+        
         lorebookData.entries[uid] = {
             uid: uid,
-            comment: entryName,
-            content: eventData.content || eventData,
+            comment: entryTitle,
+            content: eventData.content,
             constant: false,
             selective: true,
             key: keywords,
@@ -510,20 +513,36 @@ RULES:
 CHAT LOG (Message ID ${chatContext.startId} ~ ${chatContext.endId}):
 ${chatContext.formattedChat}`;
 
-    const subPrompt = `You are a timeline event extractor. Analyze the following roleplay chat and summarize it as a single timeline event.
+    const subPrompt = `You are a timeline event extractor. Analyze the following roleplay chat and create a single themed timeline entry containing multiple events.
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {
-    "content": "### **[Event Title] ([Date/Time])**\\n*   **Event:** [Detailed description of what happened]\\n*   **Result:** [The outcome and significance]",
-    "keywords": ["keyword1", "keyword2", "키워드1", "키워드2"]
+    "title": "2027년 4월 14일 (왕의 자선)",
+    "content": "**The King's Charity, The Queen's Word**\\n\\n*   **The Catalyst & The Queen's Wrath (Afternoon, Apr 14):**\\n    *   **Event:** During a quiet cafe date, they overhear a man telling his cancer-stricken wife he wants a divorce.\\n    *   **Result:** Leah, enraged by the injustice, silently destroys her red velvet cake.\\n\\n*   **The Foundation's New Purpose (Afternoon, Apr 14):**\\n    *   **Event:** Leah asks if his foundation helps single mothers.\\n    *   **Result:** Baron instantly agrees to create a new division dedicated to her cause.",
+    "keywords": ["cafe", "카페", "foundation", "재단", "charity", "자선"]
 }
 
+TITLE FORMAT: "년도, 날짜 (주제 키워드)" - Example: "2027년 4월 14일 (첫 고백)"
+
+CONTENT FORMAT:
+**[Main Theme Title]**
+
+*   **[Event 1 Name] ([Time]):**
+    *   **Event:** [Description]
+    *   **Result:** [Outcome]
+
+*   **[Event 2 Name] ([Time]):**
+    *   **Event:** [Description]
+    *   **Result:** [Outcome]
+
+[Continue for all events...]
+
 RULES:
-- Summarize the entire chat segment as ONE coherent event
-- Keywords should include English AND Korean variations
-- Keywords: character names, location names, emotional keywords, key actions
-- Keep keywords relevant for future reference triggers
-- 4-8 keywords recommended
+- ONE entry containing MULTIPLE events grouped by theme/date
+- Title: 년도, 날짜 (주제 키워드)
+- Content: Bold theme title, then bullet-point events with Event/Result format
+- Keywords: English AND Korean, 4-8 total for the whole entry
+- Group related events together under one theme
 
 CHAT LOG (Message ID ${chatContext.startId} ~ ${chatContext.endId}):
 ${chatContext.formattedChat}`;
@@ -544,10 +563,18 @@ ${chatContext.formattedChat}`;
                     return JSON.parse(jsonMatch[0]);
                 }
                 // If JSON parse fails, return raw content
-                return { content: response, keywords: [] };
+                return { 
+                    title: '타임라인 이벤트',
+                    content: response, 
+                    keywords: [] 
+                };
             } catch (parseError) {
                 log('⚠️ JSON parse failed, using raw content:', parseError);
-                return { content: response, keywords: [] };
+                return { 
+                    title: '타임라인 이벤트',
+                    content: response, 
+                    keywords: [] 
+                };
             }
         }
         
