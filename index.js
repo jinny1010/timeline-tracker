@@ -1,12 +1,10 @@
 // Lorebook Organizer Extension for SillyTavern
-// 로어북 자동 요약 및 정리
+// 채팅 기반 조용한 요약 → 로어북 저장
 
-import {
-    saveSettingsDebounced,
-} from '../../../../script.js';
-
+import { saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { world_names, loadWorldInfo, saveWorldInfo } from '../../../world-info.js';
+import { eventSource, event_types } from '../../../../script.js';
 
 const getContext = () => SillyTavern.getContext();
 const extensionName = 'lorebook-organizer';
@@ -21,6 +19,45 @@ const defaultSettings = {
 let currentLoreBook = null;
 let currentEntries = [];
 let isProcessing = false;
+let pendingEntry = null;
+let pendingMode = null;
+let pendingWorldName = null;
+
+// ========== 프롬프트 템플릿 ==========
+
+const PROMPTS = {
+    relationship: (existingContent, charName, userName) => `(OOC: 로어북의 #relationship 참고하여 ${charName}이 기억할 것들이 추가로 생겼다면 그것도 추가하거나 업데이트해줘.
+바뀌지 않았다면 변화없음 이라고 적어줘
+추가하거나 업데이트 된 부분만 적어줘. 호칭의 변화도 있으면 반드시 수정.
+그가 약속한 것, 그의 의외의 행동, 그가 미래에 해야 할 것은 되도록 포함해.
+${charName}이 알게 된 ${userName}에 관한 것도 추가된 게 있으면 추가해줘 (습관, 귀여운 행동, 사랑해! 이런 거.)
+요약하면서 중요한 대사 같은 것은 자연스럽게 어감만 살려 추가해서 같이 적어줘 (고백, 약속 같은 거)
+영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
+
+기존 로어북 양식:
+${existingContent.substring(0, 2000)}
+
+위 양식을 참고해서 같은 스타일로 작성해줘.)`,
+
+    timelineMain: (existingContent, charName, userName) => `(OOC: 이전 이야기의 타임라인을 참고하여 지금까지의 이야기를 타임라인에 추가해 줘. 날짜를 작성하는 것을 잊지 마. 이전 타임라인의 양식을 따라.
+NSFW 요소가 있다면, 어떻게 뭘 했는지 조금 더 추가해서 요약해.
+요약하면서 중요한 대사 같은 것은 자연스럽게 어감만 살려 추가해서 같이 적어줘 (고백, 약속 같은 거)
+영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
+
+기존 타임라인 양식:
+${existingContent.substring(0, 2000)}
+
+위 양식을 참고해서 같은 스타일로 작성해줘.)`,
+
+    timelineSub: (existingContent, charName, userName) => `(OOC: 지금까지의 대화를 바탕으로 새로운 서브 스토리 항목을 만들어줘.
+첫 줄에 KEYWORDS: 키워드1, 키워드2, 키워드3 (3-5개의 트리거 키워드)
+그 다음 줄부터 이 특정 이야기/이벤트의 상세 요약을 작성해.
+배경, 무슨 일이 있었는지, 감정적 순간들, 캐릭터 상호작용을 포함해.
+영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
+
+참고할 메인 타임라인 양식:
+${existingContent.substring(0, 1500)})`
+};
 
 // ========== 설정 ==========
 
@@ -162,60 +199,27 @@ async function getWorldInfoData(worldName) {
     }
 }
 
-function getChatContent() {
-    const ctx = getContext();
-    const chat = ctx.chat || [];
-    const settings = extension_settings[extensionName];
-    
-    let messages = settings.summaryRange === 'recent' 
-        ? chat.slice(-settings.recentMessageCount) 
-        : chat;
-    
-    return messages.map(msg => {
-        const role = msg.is_user ? 'User' : (msg.is_system ? 'System' : 'Character');
-        return `[${role}]: ${msg.mes}`;
-    }).join('\n\n');
-}
+// ========== SillyTavern 팝업 (POPUP_TYPE 사용) ==========
 
-// ========== AI 생성 ==========
-
-async function generateWithAI(prompt) {
+async function showLoPopup(content, type = 'TEXT', options = {}) {
     const ctx = getContext();
     
-    try {
-        // 방법 1: generateRaw
-        if (typeof ctx.generateRaw === 'function') {
-            const result = await ctx.generateRaw(prompt, null, false, false);
-            if (result) return result;
-        }
-        
-        // 방법 2: Generate 함수
-        if (typeof ctx.Generate === 'function') {
-            const result = await ctx.Generate('quiet', { quiet_prompt: prompt, skipWIAN: true });
-            if (result) return result;
-        }
-        
-        // 방법 3: executeSlashCommands
-        if (typeof ctx.executeSlashCommands === 'function') {
-            const escaped = prompt.replace(/\|/g, '\\|').replace(/"/g, '\\"');
-            const result = await ctx.executeSlashCommands(`/genraw lock=on ${escaped}`);
-            return result?.pipe || '';
-        }
-        
-        throw new Error('No generation method available');
-    } catch (error) {
-        console.error('[LO] Generation error:', error);
-        throw error;
+    // POPUP_TYPE enum 값 사용
+    const POPUP_TYPE = {
+        TEXT: 1,
+        CONFIRM: 2,
+        INPUT: 3,
+    };
+    
+    const popupType = POPUP_TYPE[type] || POPUP_TYPE.TEXT;
+    
+    if (ctx.callGenericPopup) {
+        return await ctx.callGenericPopup(content, popupType, '', options);
+    } else if (ctx.callPopup) {
+        return await ctx.callPopup(content, popupType, '', options);
     }
-}
-
-// ========== 팝업 ==========
-
-async function showPopup(content, type = 'text', options = {}) {
-    const ctx = getContext();
-    const popup = ctx.callGenericPopup || ctx.callPopup;
-    if (!popup) throw new Error('Popup not available');
-    return await popup(content, type, '', options);
+    
+    throw new Error('Popup not available');
 }
 
 // ========== 메인 플로우 ==========
@@ -257,12 +261,15 @@ async function openLorebookSelector() {
     currentEntries.forEach((entry, idx) => {
         const title = entry.comment || (Array.isArray(entry.key) ? entry.key[0] : entry.key) || `Entry ${entry.uid}`;
         const isTimeline = title.toLowerCase().includes('timeline');
+        const isRelationship = title.toLowerCase().includes('relationship');
         const keys = Array.isArray(entry.key) ? entry.key.slice(0, 3).join(', ') : '';
+        
+        const icon = isTimeline ? '📅' : isRelationship ? '💕' : '📝';
         
         entriesHtml += `
             <div class="lo-entry-item" data-index="${idx}" data-timeline="${isTimeline}"
                  style="padding:12px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                <div style="font-weight:600;">${isTimeline ? '📅' : '📝'} ${escapeHtml(title)}</div>
+                <div style="font-weight:600;">${icon} ${escapeHtml(title)}</div>
                 <div style="font-size:0.85em; opacity:0.7; margin-top:3px;">${escapeHtml(keys)}</div>
             </div>
         `;
@@ -285,20 +292,24 @@ async function openLorebookSelector() {
         if (isProcessing) return;
         
         const idx = parseInt($(this).data('index'));
-        const isTimeline = $(this).data('timeline') === true;
+        const isTimeline = $(this).data('timeline') === true || $(this).data('timeline') === 'true';
         const entry = currentEntries[idx];
         
         if (!entry) return;
         
         // 팝업 닫기
-        $('.popup-button-ok, #dialogue_popup_ok').click();
+        $('.popup-button-ok, #dialogue_popup_ok, .menu_button.result-control').first().click();
         $(document).off('click.lo');
         
         await sleep(300);
         await processEntry(entry, isTimeline, currentLoreBook);
     });
     
-    await showPopup(popupHtml, 'text', { wide: true });
+    try {
+        await showLoPopup(popupHtml, 'TEXT', { wide: true, okButton: '닫기' });
+    } catch(e) {
+        console.error('[LO] Popup error:', e);
+    }
     $(document).off('click.lo');
 }
 
@@ -314,239 +325,160 @@ async function processEntry(entry, isTimeline, worldName) {
                 return;
             }
             
-            if (storyType === 'main') {
-                await processMainTimeline(entry, worldName);
-            } else {
-                await processSubStory(entry, worldName);
-            }
+            pendingMode = storyType === 'main' ? 'timeline-main' : 'timeline-sub';
         } else {
-            await processGenericEntry(entry, worldName);
+            pendingMode = 'relationship';
         }
+        
+        pendingEntry = entry;
+        pendingWorldName = worldName;
+        
+        // 프롬프트 전송
+        await sendSummaryRequest(entry, pendingMode);
+        
     } catch (error) {
         console.error('[LO] Error:', error);
         toastr.error('오류: ' + error.message);
-    } finally {
         isProcessing = false;
     }
 }
 
 async function selectStoryType() {
-    const html = `
-        <div style="min-width:300px;">
-            <h3 style="margin:0 0 15px; text-align:center;">📅 스토리 유형</h3>
-            <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                <input type="radio" name="lo_story" value="main" checked> <strong>메인 스토리</strong>
-                <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">기존 타임라인에 추가</div>
-            </label>
-            <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                <input type="radio" name="lo_story" value="sub"> <strong>서브 스토리</strong>
-                <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">새 로어북 항목 생성</div>
-            </label>
-        </div>
-    `;
-    
-    const result = await showPopup(html, 'confirm', { okButton: '확인', cancelButton: '취소' });
-    return result ? $('input[name="lo_story"]:checked').val() : null;
+    return new Promise(async (resolve) => {
+        const html = `
+            <div style="min-width:300px;">
+                <h3 style="margin:0 0 15px; text-align:center;">📅 스토리 유형</h3>
+                <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
+                    <input type="radio" name="lo_story" value="main" checked> <strong>메인 스토리</strong>
+                    <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">기존 타임라인에 추가</div>
+                </label>
+                <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
+                    <input type="radio" name="lo_story" value="sub"> <strong>서브 스토리</strong>
+                    <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">새 로어북 항목 생성</div>
+                </label>
+            </div>
+        `;
+        
+        try {
+            const result = await showLoPopup(html, 'CONFIRM', { okButton: '확인', cancelButton: '취소' });
+            if (result) {
+                resolve($('input[name="lo_story"]:checked').val());
+            } else {
+                resolve(null);
+            }
+        } catch(e) {
+            resolve(null);
+        }
+    });
 }
 
-// ========== 일반 항목 처리 ==========
+// ========== 채팅 기반 요약 ==========
 
-async function processGenericEntry(entry, worldName) {
-    const chatContent = getChatContent();
-    if (!chatContent.trim()) {
-        toastr.warning('대화 내용이 없습니다.');
-        return;
-    }
-    
+async function sendSummaryRequest(entry, mode) {
+    const ctx = getContext();
+    const charName = ctx.characters[ctx.characterId]?.name || 'Character';
+    const userName = ctx.name1 || 'User';
     const existingContent = entry.content || '';
     
-    const prompt = `You are a lorebook editor for a roleplay game.
-
-TASK: Analyze the CONVERSATION and UPDATE the existing lorebook entry with NEW information.
-
-=== EXISTING LOREBOOK ENTRY ===
-${existingContent}
-
-=== RECENT CONVERSATION TO ANALYZE ===
-${chatContent}
-
-=== CRITICAL INSTRUCTIONS ===
-1. READ the conversation carefully and extract NEW events, relationship changes, discoveries, or emotional developments
-2. KEEP the exact same markdown format and section structure as the existing entry
-3. ADD new information to the appropriate sections:
-   - "Perception Evolution": Update how the character views the other person based on new events
-   - "Information Known About": Add newly learned facts
-   - "Key Moments & Turning Points": Add significant new events from the conversation
-   - "Future Commitments": Update based on new promises or intentions
-4. DO NOT just copy the existing entry - you MUST add new content from the conversation
-5. Write in English only
-6. If nothing significant happened, still note minor interactions or mood changes
-
-OUTPUT the complete updated lorebook entry:`;
-
-    toastr.info('AI 분석 중... 잠시 기다려주세요.');
+    let prompt;
+    if (mode === 'relationship') {
+        prompt = PROMPTS.relationship(existingContent, charName, userName);
+    } else if (mode === 'timeline-main') {
+        prompt = PROMPTS.timelineMain(existingContent, charName, userName);
+    } else {
+        prompt = PROMPTS.timelineSub(existingContent, charName, userName);
+    }
+    
+    toastr.info('AI에게 요약 요청 중... 잠시 기다려주세요.');
     
     try {
-        const englishResult = await generateWithAI(prompt);
-        
-        if (!englishResult?.trim()) {
-            toastr.error('AI 응답이 비어있습니다.');
-            return;
+        // 방법 1: /trigger quiet 사용 (채팅에 안 보임)
+        if (ctx.executeSlashCommandsWithOptions) {
+            const result = await ctx.executeSlashCommandsWithOptions(`/trigger await=true ${prompt}`);
+            if (result?.pipe) {
+                await handleAIResponse(result.pipe);
+                return;
+            }
         }
         
-        // 한글 번역도 생성
-        toastr.info('한글 번역 생성 중...');
-        const koreanPrompt = `Translate the following lorebook entry to Korean. Keep the markdown formatting intact.
-
-${englishResult}
-
-Output Korean translation only:`;
-        
-        let koreanResult = '';
-        try {
-            koreanResult = await generateWithAI(koreanPrompt);
-        } catch (e) {
-            koreanResult = '(번역 실패)';
+        // 방법 2: generateQuietPrompt 사용
+        if (ctx.generateQuietPrompt) {
+            const result = await ctx.generateQuietPrompt(prompt);
+            if (result) {
+                await handleAIResponse(result);
+                return;
+            }
         }
         
-        await showEditModal(englishResult.trim(), koreanResult.trim(), entry, 'generic', worldName);
+        // 방법 3: Generate quiet 모드
+        if (ctx.Generate) {
+            const result = await ctx.Generate('quiet', { quiet_prompt: prompt, skipWIAN: true, force_name2: true });
+            if (result) {
+                await handleAIResponse(result);
+                return;
+            }
+        }
+        
+        // 방법 4: 슬래시 커맨드
+        if (ctx.executeSlashCommands) {
+            const result = await ctx.executeSlashCommands(`/gen lock=on ${prompt}`);
+            if (result?.pipe) {
+                await handleAIResponse(result.pipe);
+                return;
+            }
+        }
+        
+        throw new Error('생성 방법을 찾을 수 없습니다.');
         
     } catch (error) {
-        console.error('[LO] Error:', error);
+        console.error('[LO] Generation error:', error);
         toastr.error('요약 생성 실패: ' + error.message);
+        isProcessing = false;
     }
 }
 
-// ========== 메인 타임라인 ==========
+// ========== AI 응답 처리 ==========
 
-async function processMainTimeline(entry, worldName) {
-    const chatContent = getChatContent();
-    if (!chatContent.trim()) {
-        toastr.warning('대화 내용이 없습니다.');
+async function handleAIResponse(response) {
+    if (!response || !pendingEntry) {
+        toastr.error('응답이 없습니다.');
+        isProcessing = false;
         return;
     }
     
-    const existingContent = entry.content || '';
+    console.log('[LO] AI Response received:', response.substring(0, 200) + '...');
     
-    const prompt = `You are a timeline writer for a roleplay game.
-
-TASK: Create a NEW timeline entry summarizing the events in the conversation.
-
-=== EXISTING TIMELINE (for format reference) ===
-${existingContent}
-
-=== CONVERSATION TO SUMMARIZE ===
-${chatContent}
-
-=== INSTRUCTIONS ===
-1. Follow the EXACT same format as the existing timeline
-2. Summarize the KEY EVENTS that happened in the conversation
-3. Include: what happened, emotional moments, important dialogue, relationship developments
-4. Write in English
-5. This will be APPENDED to the existing timeline
-
-OUTPUT only the NEW timeline entry to add (not the whole timeline):`;
-
-    toastr.info('타임라인 생성 중...');
+    // 영어/한글 분리 시도
+    let englishContent = response;
+    let koreanContent = '';
     
-    try {
-        const englishResult = await generateWithAI(prompt);
-        
-        if (!englishResult?.trim()) {
-            toastr.error('AI 응답이 비어있습니다.');
-            return;
+    // 한국어 번역 부분 찾기
+    const koreanMarkers = ['한국어', '번역:', 'Korean:', '한글:', '---'];
+    for (const marker of koreanMarkers) {
+        const idx = response.indexOf(marker);
+        if (idx > 0 && idx < response.length - 100) {
+            englishContent = response.substring(0, idx).trim();
+            koreanContent = response.substring(idx).trim();
+            break;
         }
-        
-        toastr.info('한글 번역 중...');
-        const koreanPrompt = `Translate to Korean, keep formatting:\n\n${englishResult}`;
-        let koreanResult = '';
-        try {
-            koreanResult = await generateWithAI(koreanPrompt);
-        } catch (e) {
-            koreanResult = '(번역 실패)';
-        }
-        
-        await showEditModal(englishResult.trim(), koreanResult.trim(), entry, 'timeline-main', worldName);
-        
-    } catch (error) {
-        toastr.error('타임라인 생성 실패');
-    }
-}
-
-// ========== 서브 스토리 ==========
-
-async function processSubStory(entry, worldName) {
-    const chatContent = getChatContent();
-    if (!chatContent.trim()) {
-        toastr.warning('대화 내용이 없습니다.');
-        return;
     }
     
-    const prompt = `You are a sub-story writer for a roleplay game.
-
-TASK: Create a standalone sub-story entry from this conversation.
-
-=== CONVERSATION ===
-${chatContent}
-
-=== INSTRUCTIONS ===
-1. First line must be: KEYWORDS: keyword1, keyword2, keyword3 (3-5 relevant trigger keywords)
-2. Then write a detailed summary of this specific story/event
-3. Include: setting, what happened, emotional beats, character interactions
-4. Write in English
-5. This will become a separate lorebook entry
-
-OUTPUT format:
-KEYWORDS: keyword1, keyword2, keyword3
-[Your detailed sub-story summary here]`;
-
-    toastr.info('서브 스토리 생성 중...');
-    
-    try {
-        const englishResult = await generateWithAI(prompt);
-        
-        if (!englishResult?.trim()) {
-            toastr.error('AI 응답이 비어있습니다.');
-            return;
-        }
-        
-        toastr.info('한글 번역 중...');
-        const koreanPrompt = `Translate to Korean (keep KEYWORDS line in English):\n\n${englishResult}`;
-        let koreanResult = '';
-        try {
-            koreanResult = await generateWithAI(koreanPrompt);
-        } catch (e) {
-            koreanResult = '(번역 실패)';
-        }
-        
-        await showEditModal(englishResult.trim(), koreanResult.trim(), entry, 'timeline-sub', worldName);
-        
-    } catch (error) {
-        toastr.error('서브 스토리 생성 실패');
-    }
-}
-
-// ========== 편집 모달 (한글/영어) ==========
-
-async function showEditModal(englishContent, koreanContent, originalEntry, mode, worldName) {
     // 서브스토리면 키워드 파싱
     let keywords = '';
-    let engContent = englishContent;
-    let korContent = koreanContent;
-    
-    if (mode === 'timeline-sub') {
-        const engLines = englishContent.split('\n');
-        if (engLines[0]?.toUpperCase().startsWith('KEYWORDS:')) {
-            keywords = engLines[0].replace(/^KEYWORDS:\s*/i, '').trim();
-            engContent = engLines.slice(1).join('\n').trim();
-        }
-        
-        const korLines = koreanContent.split('\n');
-        if (korLines[0]?.toUpperCase().startsWith('KEYWORDS:')) {
-            korContent = korLines.slice(1).join('\n').trim();
+    if (pendingMode === 'timeline-sub') {
+        const lines = englishContent.split('\n');
+        if (lines[0]?.toUpperCase().includes('KEYWORDS:')) {
+            keywords = lines[0].replace(/^KEYWORDS:\s*/i, '').trim();
+            englishContent = lines.slice(1).join('\n').trim();
         }
     }
     
+    await showEditModal(englishContent, koreanContent, keywords, pendingEntry, pendingMode, pendingWorldName);
+}
+
+// ========== 편집 모달 ==========
+
+async function showEditModal(englishContent, koreanContent, keywords, originalEntry, mode, worldName) {
     const keywordHtml = mode === 'timeline-sub' ? `
         <div style="margin-bottom:15px;">
             <label style="font-weight:600;">🏷️ 키워드 (쉼표 구분)</label>
@@ -555,15 +487,17 @@ async function showEditModal(englishContent, koreanContent, originalEntry, mode,
         </div>
     ` : '';
     
-    const modeLabel = mode === 'generic' ? '로어북 업데이트' : 
+    const modeLabel = mode === 'relationship' ? '관계 정보 업데이트' : 
                       mode === 'timeline-main' ? '타임라인 추가' : '서브 스토리 생성';
     
+    const hasKorean = koreanContent && koreanContent.length > 50;
+    
     const html = `
-        <div style="display:flex; flex-direction:column; gap:10px; min-width:700px; max-width:900px;">
+        <div style="display:flex; flex-direction:column; gap:10px; min-width:${hasKorean ? '800px' : '500px'}; max-width:900px;">
             <h3 style="margin:0; text-align:center;">✏️ ${modeLabel} - 확인 및 수정</h3>
             
             <div style="padding:10px; background:rgba(255,193,7,0.1); border-radius:5px; border-left:3px solid #ffc107;">
-                <strong>⚠️ 저장 전 확인하세요!</strong> 영어 내용이 로어북에 저장됩니다.
+                ⚠️ <strong>저장 전 확인하세요!</strong> 왼쪽 영어 내용이 로어북에 저장됩니다.
             </div>
             
             ${keywordHtml}
@@ -571,26 +505,44 @@ async function showEditModal(englishContent, koreanContent, originalEntry, mode,
             <div style="display:flex; gap:15px;">
                 <div style="flex:1;">
                     <label style="font-weight:600; display:block; margin-bottom:5px;">🇺🇸 English (저장될 내용)</label>
-                    <textarea id="lo_english" rows="18" 
-                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:13px;">${escapeHtml(engContent)}</textarea>
+                    <textarea id="lo_english" rows="20" 
+                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:12px; font-family:monospace;">${escapeHtml(englishContent)}</textarea>
                 </div>
+                ${hasKorean ? `
                 <div style="flex:1;">
                     <label style="font-weight:600; display:block; margin-bottom:5px;">🇰🇷 한글 (참고용)</label>
-                    <textarea id="lo_korean" rows="18" readonly
-                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:13px; opacity:0.8;">${escapeHtml(korContent)}</textarea>
+                    <textarea id="lo_korean" rows="20" readonly
+                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:12px; opacity:0.85;">${escapeHtml(koreanContent)}</textarea>
                 </div>
+                ` : ''}
             </div>
         </div>
     `;
     
-    const confirmed = await showPopup(html, 'confirm', { okButton: '💾 저장', cancelButton: '취소', wide: true, large: true });
-    
-    if (confirmed) {
-        const finalContent = $('#lo_english').val();
-        const finalKeywords = $('#lo_keywords').val() || '';
+    try {
+        const confirmed = await showLoPopup(html, 'CONFIRM', { 
+            okButton: '💾 로어북에 저장', 
+            cancelButton: '취소', 
+            wide: true,
+            large: true,
+            allowVerticalScrolling: true
+        });
         
-        await saveToLorebook(finalContent, finalKeywords, originalEntry, mode, worldName);
+        if (confirmed) {
+            const finalContent = $('#lo_english').val();
+            const finalKeywords = $('#lo_keywords').val() || '';
+            
+            await saveToLorebook(finalContent, finalKeywords, originalEntry, mode, worldName);
+        }
+    } catch(e) {
+        console.error('[LO] Modal error:', e);
     }
+    
+    // 정리
+    pendingEntry = null;
+    pendingMode = null;
+    pendingWorldName = null;
+    isProcessing = false;
 }
 
 // ========== 저장 ==========
@@ -625,7 +577,7 @@ async function saveToLorebook(content, keywords, originalEntry, mode, worldName)
             };
             
             await saveWorldInfo(worldName, worldData);
-            toastr.success(`서브 스토리 생성됨: ${keywordArray.join(', ')}`);
+            toastr.success(`✅ 서브 스토리 생성됨: ${keywordArray.join(', ')}`);
             
         } else if (mode === 'timeline-main') {
             // 기존 타임라인에 추가
@@ -633,16 +585,16 @@ async function saveToLorebook(content, keywords, originalEntry, mode, worldName)
             if (entry) {
                 entry.content = (entry.content || '') + '\n\n---\n\n' + content;
                 await saveWorldInfo(worldName, worldData);
-                toastr.success('타임라인 업데이트됨');
+                toastr.success('✅ 타임라인 업데이트됨');
             }
             
         } else {
-            // 일반 항목 교체
+            // relationship 등 일반 항목 교체
             const entry = findEntryByUid(worldData.entries, originalEntry.uid);
             if (entry) {
                 entry.content = content;
                 await saveWorldInfo(worldName, worldData);
-                toastr.success('로어북 업데이트됨');
+                toastr.success('✅ 로어북 업데이트됨');
             }
         }
         
