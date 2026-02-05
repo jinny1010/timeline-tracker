@@ -38,9 +38,37 @@ jQuery(async () => {
         extension_settings[EXTENSION_NAME] = { ...defaultSettings };
     }
     
-    // Load HTML settings panel
-    const settingsHtml = await $.get(`/scripts/extensions/third-party/${EXTENSION_NAME}/settings.html`);
+    // Load settings panel (inline - no external file needed)
+    const settingsHtml = `
+        <div class="timeline-tracker-settings">
+            <div class="inline-drawer">
+                <div class="inline-drawer-toggle inline-drawer-header">
+                    <b>🕐 Timeline Tracker</b>
+                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                </div>
+                <div class="inline-drawer-content">
+                    <div style="padding: 10px; display: flex; flex-direction: column; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="timeline-enabled" checked>
+                            <span>활성화</span>
+                        </label>
+                        <button id="timeline-open-popup" class="menu_button">
+                            <i class="fa-solid fa-clock-rotate-left"></i> 타임라인 생성
+                        </button>
+                        <small style="color: var(--SmartThemeFadedColor);">
+                            채팅 내용을 분석하여 타임라인을 자동 생성합니다.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
     $('#extensions_settings').append(settingsHtml);
+    
+    // Settings panel button click
+    $('#timeline-open-popup').on('click', () => {
+        showTimelinePopup();
+    });
     
     // Bind UI events
     bindUIEvents();
