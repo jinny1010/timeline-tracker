@@ -1,11 +1,11 @@
 {
-    "display_name": "Lorebook Organizer",
+    "display_name": "Timeline Tracker",
     "loading_order": 10,
     "requires": [],
     "optional": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "Jin",
+    "author": "BunnyMo",
     "version": "1.0.0",
     "homePage": "",
     "auto_update": false

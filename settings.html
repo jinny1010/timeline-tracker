@@ -1,0 +1,48 @@
+<div class="timeline-tracker-settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>🕐 Timeline Tracker</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="timeline-settings-content">
+                <!-- Enable Toggle -->
+                <div class="timeline-setting-row">
+                    <label for="timeline-enabled">
+                        <input type="checkbox" id="timeline-enabled" checked>
+                        <span>활성화</span>
+                    </label>
+                </div>
+                
+                <!-- Main Lorebook -->
+                <div class="timeline-setting-row">
+                    <label for="timeline-main-lorebook">기본 메인 로어북</label>
+                    <select id="timeline-main-lorebook" class="text_pole">
+                        <option value="">-- 선택 안함 --</option>
+                    </select>
+                </div>
+                
+                <!-- Scan Depth -->
+                <div class="timeline-setting-row">
+                    <label for="timeline-scan-depth">기본 스캔 메시지 수</label>
+                    <input type="number" id="timeline-scan-depth" class="text_pole" value="50" min="1" max="500">
+                </div>
+                
+                <!-- Open Popup Button -->
+                <div class="timeline-setting-row">
+                    <button id="timeline-open-popup" class="menu_button">
+                        <i class="fa-solid fa-clock-rotate-left"></i>
+                        타임라인 생성 열기
+                    </button>
+                </div>
+                
+                <hr>
+                <small class="timeline-hint">
+                    채팅 내용을 분석하여 타임라인을 자동 생성합니다.<br>
+                    • 메인: 전체 스토리를 하나의 엔트리로 (Constant)<br>
+                    • 서브: 개별 이벤트를 키워드로 트리거 (Selective)
+                </small>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,622 +1,537 @@
-// Lorebook Organizer Extension for SillyTavern
-// 채팅 기반 조용한 요약 → 로어북 저장
+// =============================================================================
+// TIMELINE TRACKER - Main Entry Point
+// SillyTavern Extension for tracking story timeline and events
+// =============================================================================
 
-import { saveSettingsDebounced } from '../../../../script.js';
-import { extension_settings } from '../../../extensions.js';
-import { world_names, loadWorldInfo, saveWorldInfo } from '../../../world-info.js';
-import { eventSource, event_types } from '../../../../script.js';
+import { extension_settings, getContext, saveMetadataDebounced } from '../../../extensions.js';
+import { saveSettingsDebounced, chat, chat_metadata, characters, this_chid, generateRaw } from '../../../../script.js';
+import { world_info, world_names, loadWorldInfo, createWorldInfoEntry, saveWorldInfo, updateWorldInfoList, selected_world_info } from '../../../world-info.js';
 
-const getContext = () => SillyTavern.getContext();
-const extensionName = 'lorebook-organizer';
+const EXTENSION_NAME = 'timeline-tracker';
+const DEBUG = true;
 
+// Default settings
 const defaultSettings = {
-    buttonPosition: 'sidebar',
-    summaryRange: 'recent',
-    recentMessageCount: 20,
     enabled: true,
+    mainLorebookName: '',
+    subLorebookPrefix: 'Timeline_',
+    autoKeywords: true,
+    scanDepth: 50, // How many messages to scan
 };
 
-let currentLoreBook = null;
-let currentEntries = [];
-let isProcessing = false;
-let pendingEntry = null;
-let pendingMode = null;
-let pendingWorldName = null;
-
-// ========== 프롬프트 템플릿 ==========
-
-const PROMPTS = {
-    relationship: (existingContent, charName, userName) => `(OOC: 로어북의 #relationship 참고하여 ${charName}이 기억할 것들이 추가로 생겼다면 그것도 추가하거나 업데이트해줘.
-바뀌지 않았다면 변화없음 이라고 적어줘
-추가하거나 업데이트 된 부분만 적어줘. 호칭의 변화도 있으면 반드시 수정.
-그가 약속한 것, 그의 의외의 행동, 그가 미래에 해야 할 것은 되도록 포함해.
-${charName}이 알게 된 ${userName}에 관한 것도 추가된 게 있으면 추가해줘 (습관, 귀여운 행동, 사랑해! 이런 거.)
-요약하면서 중요한 대사 같은 것은 자연스럽게 어감만 살려 추가해서 같이 적어줘 (고백, 약속 같은 거)
-영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
-
-기존 로어북 양식:
-${existingContent.substring(0, 2000)}
-
-위 양식을 참고해서 같은 스타일로 작성해줘.)`,
-
-    timelineMain: (existingContent, charName, userName) => `(OOC: 이전 이야기의 타임라인을 참고하여 지금까지의 이야기를 타임라인에 추가해 줘. 날짜를 작성하는 것을 잊지 마. 이전 타임라인의 양식을 따라.
-NSFW 요소가 있다면, 어떻게 뭘 했는지 조금 더 추가해서 요약해.
-요약하면서 중요한 대사 같은 것은 자연스럽게 어감만 살려 추가해서 같이 적어줘 (고백, 약속 같은 거)
-영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
-
-기존 타임라인 양식:
-${existingContent.substring(0, 2000)}
-
-위 양식을 참고해서 같은 스타일로 작성해줘.)`,
-
-    timelineSub: (existingContent, charName, userName) => `(OOC: 지금까지의 대화를 바탕으로 새로운 서브 스토리 항목을 만들어줘.
-첫 줄에 KEYWORDS: 키워드1, 키워드2, 키워드3 (3-5개의 트리거 키워드)
-그 다음 줄부터 이 특정 이야기/이벤트의 상세 요약을 작성해.
-배경, 무슨 일이 있었는지, 감정적 순간들, 캐릭터 상호작용을 포함해.
-영어로 전체를 쓴 뒤, 한국어로 번역한 것도 써줘.
-
-참고할 메인 타임라인 양식:
-${existingContent.substring(0, 1500)})`
-};
-
-// ========== 설정 ==========
-
-function loadSettings() {
-    extension_settings[extensionName] = extension_settings[extensionName] || {};
-    for (const [key, value] of Object.entries(defaultSettings)) {
-        if (extension_settings[extensionName][key] === undefined) {
-            extension_settings[extensionName][key] = value;
-        }
+// Debug logger
+function log(...args) {
+    if (DEBUG) {
+        console.log(`[${EXTENSION_NAME}]`, ...args);
     }
 }
 
-function createSettingsUI() {
-    const settingsHtml = `
-        <div class="lo-settings">
-            <div class="inline-drawer">
-                <div class="inline-drawer-toggle inline-drawer-header">
-                    <b>Lorebook Organizer</b>
-                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-                </div>
-                <div class="inline-drawer-content">
-                    <div style="margin: 10px 0;">
-                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-                            <input type="checkbox" id="lo_enabled" ${extension_settings[extensionName].enabled ? 'checked' : ''}>
-                            <span>활성화</span>
-                        </label>
-                    </div>
-                    <div style="margin: 10px 0;">
-                        <label style="display:block; margin-bottom:5px;">버튼 위치</label>
-                        <select id="lo_button_position" style="width:100%; padding:5px;">
-                            <option value="input" ${extension_settings[extensionName].buttonPosition === 'input' ? 'selected' : ''}>입력창 옆</option>
-                            <option value="sidebar" ${extension_settings[extensionName].buttonPosition === 'sidebar' ? 'selected' : ''}>사이드바</option>
-                        </select>
-                    </div>
-                    <div style="margin: 10px 0;">
-                        <label style="display:block; margin-bottom:5px;">요약 범위</label>
-                        <select id="lo_summary_range" style="width:100%; padding:5px;">
-                            <option value="recent" ${extension_settings[extensionName].summaryRange === 'recent' ? 'selected' : ''}>최근 N개 메시지</option>
-                            <option value="all" ${extension_settings[extensionName].summaryRange === 'all' ? 'selected' : ''}>전체 대화</option>
-                        </select>
-                    </div>
-                    <div id="lo_recent_count_wrapper" style="margin: 10px 0; ${extension_settings[extensionName].summaryRange !== 'recent' ? 'display:none;' : ''}">
-                        <label style="display:block; margin-bottom:5px;">메시지 수</label>
-                        <input type="number" id="lo_recent_count" min="1" max="100" value="${extension_settings[extensionName].recentMessageCount}" style="width:100%; padding:5px;">
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-    
-    $('#extensions_settings').append(settingsHtml);
-    
-    $('#lo_enabled').on('change', function() {
-        extension_settings[extensionName].enabled = this.checked;
-        saveSettingsDebounced();
-        updateButtonPosition();
-    });
-    
-    $('#lo_button_position').on('change', function() {
-        extension_settings[extensionName].buttonPosition = $(this).val();
-        saveSettingsDebounced();
-        updateButtonPosition();
-    });
-    
-    $('#lo_summary_range').on('change', function() {
-        extension_settings[extensionName].summaryRange = $(this).val();
-        saveSettingsDebounced();
-        $('#lo_recent_count_wrapper').toggle($(this).val() === 'recent');
-    });
-    
-    $('#lo_recent_count').on('change', function() {
-        extension_settings[extensionName].recentMessageCount = parseInt($(this).val()) || 20;
-        saveSettingsDebounced();
-    });
-}
-
-// ========== UI ==========
-
-function updateButtonPosition() {
-    $('#lo_menu_container').remove();
-    if (!extension_settings[extensionName].enabled) return;
-    addMenuButtons();
-}
-
-function addMenuButtons() {
-    $('#lo_menu_container').remove();
-    const position = extension_settings[extensionName].buttonPosition;
-    
-    if (position === 'sidebar') {
-        const buttonHtml = `
-            <div id="lo_menu_container" class="extension_container interactable" tabindex="0">
-                <div id="lo-main-btn" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
-                    <div class="fa-solid fa-book-bookmark extensionsMenuExtensionButton"></div>
-                    <span>로어북 정리</span>
-                </div>
-            </div>
-        `;
-        $('#extensionsMenu').prepend(buttonHtml);
-    } else {
-        const buttonHtml = `
-            <div id="lo_menu_container" class="lo-input-btn interactable" title="로어북 정리" tabindex="0">
-                <i class="fa-solid fa-book-bookmark"></i>
-            </div>
-        `;
-        $('#send_but_sheld').prepend(buttonHtml);
-    }
-    
-    $('#lo-main-btn, #lo_menu_container.lo-input-btn').on('click', openLorebookSelector);
-}
-
-// ========== 유틸 ==========
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function escapeHtml(text) {
-    if (!text) return '';
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function getCharacterLorebook() {
-    const ctx = getContext();
-    if (ctx.characterId === undefined) return null;
-    const character = ctx.characters[ctx.characterId];
-    return character?.data?.extensions?.world || null;
-}
-
-function getWorldInfoList() {
-    return world_names || [];
-}
-
-async function getWorldInfoData(worldName) {
-    try {
-        return await loadWorldInfo(worldName);
-    } catch (error) {
-        console.error('[LO] Error:', error);
-        return null;
-    }
-}
-
-// ========== SillyTavern 팝업 (POPUP_TYPE 사용) ==========
-
-async function showLoPopup(content, type = 'TEXT', options = {}) {
-    const ctx = getContext();
-    
-    // POPUP_TYPE enum 값 사용
-    const POPUP_TYPE = {
-        TEXT: 1,
-        CONFIRM: 2,
-        INPUT: 3,
-    };
-    
-    const popupType = POPUP_TYPE[type] || POPUP_TYPE.TEXT;
-    
-    if (ctx.callGenericPopup) {
-        return await ctx.callGenericPopup(content, popupType, '', options);
-    } else if (ctx.callPopup) {
-        return await ctx.callPopup(content, popupType, '', options);
-    }
-    
-    throw new Error('Popup not available');
-}
-
-// ========== 메인 플로우 ==========
-
-async function openLorebookSelector() {
-    if (isProcessing) {
-        toastr.warning('처리 중입니다.');
-        return;
-    }
-    
-    const ctx = getContext();
-    if (ctx.characterId === undefined) {
-        toastr.warning('캐릭터를 먼저 선택해주세요.');
-        return;
-    }
-    
-    const worldInfos = getWorldInfoList();
-    const charLorebook = getCharacterLorebook();
-    
-    if (!worldInfos.length) {
-        toastr.warning('로어북이 없습니다.');
-        return;
-    }
-    
-    const defaultWorld = charLorebook || worldInfos[0];
-    
-    toastr.info('로어북 로딩 중...');
-    const worldData = await getWorldInfoData(defaultWorld);
-    
-    if (!worldData?.entries) {
-        toastr.error('로어북을 불러올 수 없습니다.');
-        return;
-    }
-    
-    currentLoreBook = defaultWorld;
-    currentEntries = Object.values(worldData.entries);
-    
-    let entriesHtml = '';
-    currentEntries.forEach((entry, idx) => {
-        const title = entry.comment || (Array.isArray(entry.key) ? entry.key[0] : entry.key) || `Entry ${entry.uid}`;
-        const isTimeline = title.toLowerCase().includes('timeline');
-        const isRelationship = title.toLowerCase().includes('relationship');
-        const keys = Array.isArray(entry.key) ? entry.key.slice(0, 3).join(', ') : '';
-        
-        const icon = isTimeline ? '📅' : isRelationship ? '💕' : '📝';
-        
-        entriesHtml += `
-            <div class="lo-entry-item" data-index="${idx}" data-timeline="${isTimeline}"
-                 style="padding:12px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                <div style="font-weight:600;">${icon} ${escapeHtml(title)}</div>
-                <div style="font-size:0.85em; opacity:0.7; margin-top:3px;">${escapeHtml(keys)}</div>
-            </div>
-        `;
-    });
-    
-    const popupHtml = `
-        <div style="display:flex; flex-direction:column; gap:15px; min-width:400px;">
-            <h3 style="margin:0; text-align:center;">📚 로어북 정리</h3>
-            <div><strong>로어북:</strong> ${escapeHtml(defaultWorld)}</div>
-            <div style="max-height:350px; overflow-y:auto; border:1px solid var(--SmartThemeBorderColor); border-radius:5px; padding:10px;">
-                ${entriesHtml || '<p style="opacity:0.7; text-align:center;">항목 없음</p>'}
-            </div>
-            <p style="font-size:0.85em; opacity:0.7; text-align:center;">정리할 항목 클릭</p>
-        </div>
-    `;
-    
-    // 이벤트 핸들러
-    $(document).off('click.lo').on('click.lo', '.lo-entry-item', async function(e) {
-        e.stopPropagation();
-        if (isProcessing) return;
-        
-        const idx = parseInt($(this).data('index'));
-        const isTimeline = $(this).data('timeline') === true || $(this).data('timeline') === 'true';
-        const entry = currentEntries[idx];
-        
-        if (!entry) return;
-        
-        // 팝업 닫기
-        $('.popup-button-ok, #dialogue_popup_ok, .menu_button.result-control').first().click();
-        $(document).off('click.lo');
-        
-        await sleep(300);
-        await processEntry(entry, isTimeline, currentLoreBook);
-    });
-    
-    try {
-        await showLoPopup(popupHtml, 'TEXT', { wide: true, okButton: '닫기' });
-    } catch(e) {
-        console.error('[LO] Popup error:', e);
-    }
-    $(document).off('click.lo');
-}
-
-async function processEntry(entry, isTimeline, worldName) {
-    if (isProcessing) return;
-    isProcessing = true;
-    
-    try {
-        if (isTimeline) {
-            const storyType = await selectStoryType();
-            if (!storyType) {
-                isProcessing = false;
-                return;
-            }
-            
-            pendingMode = storyType === 'main' ? 'timeline-main' : 'timeline-sub';
-        } else {
-            pendingMode = 'relationship';
-        }
-        
-        pendingEntry = entry;
-        pendingWorldName = worldName;
-        
-        // 프롬프트 전송
-        await sendSummaryRequest(entry, pendingMode);
-        
-    } catch (error) {
-        console.error('[LO] Error:', error);
-        toastr.error('오류: ' + error.message);
-        isProcessing = false;
-    }
-}
-
-async function selectStoryType() {
-    return new Promise(async (resolve) => {
-        const html = `
-            <div style="min-width:300px;">
-                <h3 style="margin:0 0 15px; text-align:center;">📅 스토리 유형</h3>
-                <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                    <input type="radio" name="lo_story" value="main" checked> <strong>메인 스토리</strong>
-                    <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">기존 타임라인에 추가</div>
-                </label>
-                <label style="display:block; padding:15px; margin:5px 0; background:var(--SmartThemeBlurTintColor); border-radius:8px; cursor:pointer; border:1px solid var(--SmartThemeBorderColor);">
-                    <input type="radio" name="lo_story" value="sub"> <strong>서브 스토리</strong>
-                    <div style="font-size:0.85em; opacity:0.7; margin-left:20px;">새 로어북 항목 생성</div>
-                </label>
-            </div>
-        `;
-        
-        try {
-            const result = await showLoPopup(html, 'CONFIRM', { okButton: '확인', cancelButton: '취소' });
-            if (result) {
-                resolve($('input[name="lo_story"]:checked').val());
-            } else {
-                resolve(null);
-            }
-        } catch(e) {
-            resolve(null);
-        }
-    });
-}
-
-// ========== 채팅 기반 요약 ==========
-
-async function sendSummaryRequest(entry, mode) {
-    const ctx = getContext();
-    const charName = ctx.characters[ctx.characterId]?.name || 'Character';
-    const userName = ctx.name1 || 'User';
-    const existingContent = entry.content || '';
-    
-    let prompt;
-    if (mode === 'relationship') {
-        prompt = PROMPTS.relationship(existingContent, charName, userName);
-    } else if (mode === 'timeline-main') {
-        prompt = PROMPTS.timelineMain(existingContent, charName, userName);
-    } else {
-        prompt = PROMPTS.timelineSub(existingContent, charName, userName);
-    }
-    
-    toastr.info('AI에게 요약 요청 중... 잠시 기다려주세요.');
-    
-    try {
-        // 방법 1: /trigger quiet 사용 (채팅에 안 보임)
-        if (ctx.executeSlashCommandsWithOptions) {
-            const result = await ctx.executeSlashCommandsWithOptions(`/trigger await=true ${prompt}`);
-            if (result?.pipe) {
-                await handleAIResponse(result.pipe);
-                return;
-            }
-        }
-        
-        // 방법 2: generateQuietPrompt 사용
-        if (ctx.generateQuietPrompt) {
-            const result = await ctx.generateQuietPrompt(prompt);
-            if (result) {
-                await handleAIResponse(result);
-                return;
-            }
-        }
-        
-        // 방법 3: Generate quiet 모드
-        if (ctx.Generate) {
-            const result = await ctx.Generate('quiet', { quiet_prompt: prompt, skipWIAN: true, force_name2: true });
-            if (result) {
-                await handleAIResponse(result);
-                return;
-            }
-        }
-        
-        // 방법 4: 슬래시 커맨드
-        if (ctx.executeSlashCommands) {
-            const result = await ctx.executeSlashCommands(`/gen lock=on ${prompt}`);
-            if (result?.pipe) {
-                await handleAIResponse(result.pipe);
-                return;
-            }
-        }
-        
-        throw new Error('생성 방법을 찾을 수 없습니다.');
-        
-    } catch (error) {
-        console.error('[LO] Generation error:', error);
-        toastr.error('요약 생성 실패: ' + error.message);
-        isProcessing = false;
-    }
-}
-
-// ========== AI 응답 처리 ==========
-
-async function handleAIResponse(response) {
-    if (!response || !pendingEntry) {
-        toastr.error('응답이 없습니다.');
-        isProcessing = false;
-        return;
-    }
-    
-    console.log('[LO] AI Response received:', response.substring(0, 200) + '...');
-    
-    // 영어/한글 분리 시도
-    let englishContent = response;
-    let koreanContent = '';
-    
-    // 한국어 번역 부분 찾기
-    const koreanMarkers = ['한국어', '번역:', 'Korean:', '한글:', '---'];
-    for (const marker of koreanMarkers) {
-        const idx = response.indexOf(marker);
-        if (idx > 0 && idx < response.length - 100) {
-            englishContent = response.substring(0, idx).trim();
-            koreanContent = response.substring(idx).trim();
-            break;
-        }
-    }
-    
-    // 서브스토리면 키워드 파싱
-    let keywords = '';
-    if (pendingMode === 'timeline-sub') {
-        const lines = englishContent.split('\n');
-        if (lines[0]?.toUpperCase().includes('KEYWORDS:')) {
-            keywords = lines[0].replace(/^KEYWORDS:\s*/i, '').trim();
-            englishContent = lines.slice(1).join('\n').trim();
-        }
-    }
-    
-    await showEditModal(englishContent, koreanContent, keywords, pendingEntry, pendingMode, pendingWorldName);
-}
-
-// ========== 편집 모달 ==========
-
-async function showEditModal(englishContent, koreanContent, keywords, originalEntry, mode, worldName) {
-    const keywordHtml = mode === 'timeline-sub' ? `
-        <div style="margin-bottom:15px;">
-            <label style="font-weight:600;">🏷️ 키워드 (쉼표 구분)</label>
-            <input type="text" id="lo_keywords" value="${escapeHtml(keywords)}" 
-                   style="width:100%; padding:8px; margin-top:5px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor);">
-        </div>
-    ` : '';
-    
-    const modeLabel = mode === 'relationship' ? '관계 정보 업데이트' : 
-                      mode === 'timeline-main' ? '타임라인 추가' : '서브 스토리 생성';
-    
-    const hasKorean = koreanContent && koreanContent.length > 50;
-    
-    const html = `
-        <div style="display:flex; flex-direction:column; gap:10px; min-width:${hasKorean ? '800px' : '500px'}; max-width:900px;">
-            <h3 style="margin:0; text-align:center;">✏️ ${modeLabel} - 확인 및 수정</h3>
-            
-            <div style="padding:10px; background:rgba(255,193,7,0.1); border-radius:5px; border-left:3px solid #ffc107;">
-                ⚠️ <strong>저장 전 확인하세요!</strong> 왼쪽 영어 내용이 로어북에 저장됩니다.
-            </div>
-            
-            ${keywordHtml}
-            
-            <div style="display:flex; gap:15px;">
-                <div style="flex:1;">
-                    <label style="font-weight:600; display:block; margin-bottom:5px;">🇺🇸 English (저장될 내용)</label>
-                    <textarea id="lo_english" rows="20" 
-                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:12px; font-family:monospace;">${escapeHtml(englishContent)}</textarea>
-                </div>
-                ${hasKorean ? `
-                <div style="flex:1;">
-                    <label style="font-weight:600; display:block; margin-bottom:5px;">🇰🇷 한글 (참고용)</label>
-                    <textarea id="lo_korean" rows="20" readonly
-                              style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--SmartThemeBorderColor); background:var(--SmartThemeBlurTintColor); color:var(--SmartThemeBodyColor); resize:vertical; font-size:12px; opacity:0.85;">${escapeHtml(koreanContent)}</textarea>
-                </div>
-                ` : ''}
-            </div>
-        </div>
-    `;
-    
-    try {
-        const confirmed = await showLoPopup(html, 'CONFIRM', { 
-            okButton: '💾 로어북에 저장', 
-            cancelButton: '취소', 
-            wide: true,
-            large: true,
-            allowVerticalScrolling: true
-        });
-        
-        if (confirmed) {
-            const finalContent = $('#lo_english').val();
-            const finalKeywords = $('#lo_keywords').val() || '';
-            
-            await saveToLorebook(finalContent, finalKeywords, originalEntry, mode, worldName);
-        }
-    } catch(e) {
-        console.error('[LO] Modal error:', e);
-    }
-    
-    // 정리
-    pendingEntry = null;
-    pendingMode = null;
-    pendingWorldName = null;
-    isProcessing = false;
-}
-
-// ========== 저장 ==========
-
-async function saveToLorebook(content, keywords, originalEntry, mode, worldName) {
-    try {
-        const worldData = await getWorldInfoData(worldName);
-        if (!worldData?.entries) {
-            throw new Error('로어북 데이터 없음');
-        }
-        
-        if (mode === 'timeline-sub') {
-            // 새 항목 생성
-            const keywordArray = keywords.split(',').map(k => k.trim()).filter(k => k);
-            const newUid = Date.now();
-            
-            worldData.entries[newUid] = {
-                uid: newUid,
-                key: keywordArray,
-                keysecondary: [],
-                content: content,
-                comment: `Sub-Story: ${keywordArray[0] || 'Untitled'}`,
-                disable: false,
-                constant: false,
-                selective: true,
-                selectiveLogic: 0,
-                addMemo: true,
-                order: 100,
-                position: 0,
-                probability: 100,
-                useProbability: true,
-            };
-            
-            await saveWorldInfo(worldName, worldData);
-            toastr.success(`✅ 서브 스토리 생성됨: ${keywordArray.join(', ')}`);
-            
-        } else if (mode === 'timeline-main') {
-            // 기존 타임라인에 추가
-            const entry = findEntryByUid(worldData.entries, originalEntry.uid);
-            if (entry) {
-                entry.content = (entry.content || '') + '\n\n---\n\n' + content;
-                await saveWorldInfo(worldName, worldData);
-                toastr.success('✅ 타임라인 업데이트됨');
-            }
-            
-        } else {
-            // relationship 등 일반 항목 교체
-            const entry = findEntryByUid(worldData.entries, originalEntry.uid);
-            if (entry) {
-                entry.content = content;
-                await saveWorldInfo(worldName, worldData);
-                toastr.success('✅ 로어북 업데이트됨');
-            }
-        }
-        
-    } catch (error) {
-        console.error('[LO] Save error:', error);
-        toastr.error('저장 실패: ' + error.message);
-    }
-}
-
-function findEntryByUid(entries, uid) {
-    for (const entry of Object.values(entries)) {
-        if (String(entry.uid) === String(uid)) return entry;
-    }
-    return null;
-}
-
-// ========== 초기화 ==========
+// =============================================================================
+// INITIALIZATION
+// =============================================================================
 
 jQuery(async () => {
-    console.log('[Lorebook Organizer] Loading...');
-    loadSettings();
-    createSettingsUI();
-    setTimeout(addMenuButtons, 1000);
-    console.log('[Lorebook Organizer] Loaded!');
+    log('🕐 Timeline Tracker initializing...');
+    
+    // Initialize settings
+    if (!extension_settings[EXTENSION_NAME]) {
+        extension_settings[EXTENSION_NAME] = { ...defaultSettings };
+    }
+    
+    // Load HTML settings panel
+    const settingsHtml = await $.get(`/scripts/extensions/third-party/${EXTENSION_NAME}/settings.html`);
+    $('#extensions_settings').append(settingsHtml);
+    
+    // Bind UI events
+    bindUIEvents();
+    
+    // Add button to extensions menu or chat
+    addTimelineButton();
+    
+    log('🕐 Timeline Tracker initialized!');
 });
+
+// =============================================================================
+// UI SETUP
+// =============================================================================
+
+function addTimelineButton() {
+    // Add button to the extensions/extras area
+    const buttonHtml = `
+        <div id="timeline-tracker-button" class="list-group-item flex-container flexGap5" title="Generate Timeline">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+            <span>Timeline</span>
+        </div>
+    `;
+    
+    // Try to add to WI/Lorebook area or create floating button
+    $('#extensionsMenu').append(buttonHtml);
+    
+    // Click handler
+    $('#timeline-tracker-button').on('click', () => {
+        showTimelinePopup();
+    });
+}
+
+function bindUIEvents() {
+    // Settings panel events
+    $(document).on('change', '#timeline-enabled', function() {
+        extension_settings[EXTENSION_NAME].enabled = $(this).is(':checked');
+        saveSettingsDebounced();
+    });
+    
+    $(document).on('change', '#timeline-main-lorebook', function() {
+        extension_settings[EXTENSION_NAME].mainLorebookName = $(this).val();
+        saveSettingsDebounced();
+    });
+    
+    $(document).on('change', '#timeline-scan-depth', function() {
+        extension_settings[EXTENSION_NAME].scanDepth = parseInt($(this).val()) || 50;
+        saveSettingsDebounced();
+    });
+}
+
+// =============================================================================
+// MAIN POPUP UI
+// =============================================================================
+
+async function showTimelinePopup() {
+    log('🕐 Opening Timeline popup...');
+    
+    const context = getContext();
+    const chatLength = chat?.length || 0;
+    
+    // Get available lorebooks for dropdown
+    const lorebookOptions = world_names.map(name => 
+        `<option value="${name}" ${name === extension_settings[EXTENSION_NAME].mainLorebookName ? 'selected' : ''}>${name}</option>`
+    ).join('');
+    
+    const popup = $(`
+        <div class="timeline-popup-overlay">
+            <div class="timeline-popup">
+                <div class="timeline-popup-header">
+                    <h3>🕐 Timeline Tracker</h3>
+                    <button class="timeline-close-btn"><i class="fa-solid fa-times"></i></button>
+                </div>
+                
+                <div class="timeline-popup-body">
+                    <!-- Status -->
+                    <div class="timeline-status">
+                        <div class="timeline-status-item">
+                            <i class="fa-solid fa-comments"></i>
+                            <span>채팅 메시지: <strong>${chatLength}</strong>개</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Mode Selection -->
+                    <div class="timeline-section">
+                        <h4>타임라인 타입</h4>
+                        <div class="timeline-mode-options">
+                            <label class="timeline-mode-option">
+                                <input type="radio" name="timeline-mode" value="main" checked>
+                                <div class="timeline-mode-card">
+                                    <i class="fa-solid fa-book"></i>
+                                    <div>
+                                        <strong>메인 타임라인</strong>
+                                        <span>전체 스토리를 기존 로어북에 추가 (Constant)</span>
+                                    </div>
+                                </div>
+                            </label>
+                            <label class="timeline-mode-option">
+                                <input type="radio" name="timeline-mode" value="sub">
+                                <div class="timeline-mode-card">
+                                    <i class="fa-solid fa-bookmark"></i>
+                                    <div>
+                                        <strong>서브 타임라인</strong>
+                                        <span>개별 이벤트를 새 로어북으로 (Selective + 키워드)</span>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Main Timeline Options -->
+                    <div class="timeline-section timeline-main-options">
+                        <h4>메인 타임라인 설정</h4>
+                        <div class="timeline-form-group">
+                            <label>추가할 로어북 선택</label>
+                            <select id="timeline-target-lorebook" class="timeline-select">
+                                <option value="">-- 로어북 선택 --</option>
+                                ${lorebookOptions}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Sub Timeline Options -->
+                    <div class="timeline-section timeline-sub-options" style="display: none;">
+                        <h4>서브 타임라인 설정</h4>
+                        <div class="timeline-form-group">
+                            <label>새 로어북 이름</label>
+                            <input type="text" id="timeline-new-lorebook-name" class="timeline-input" placeholder="Timeline_Events">
+                        </div>
+                        <div class="timeline-form-group">
+                            <label>
+                                <input type="checkbox" id="timeline-auto-keywords" checked>
+                                키워드 자동 생성
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Scan Range -->
+                    <div class="timeline-section">
+                        <h4>스캔 범위</h4>
+                        <div class="timeline-form-group">
+                            <label>최근 메시지 수</label>
+                            <input type="number" id="timeline-scan-count" class="timeline-input" value="${Math.min(chatLength, 50)}" min="1" max="${chatLength}">
+                            <span class="timeline-hint">전체 ${chatLength}개 중</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="timeline-popup-footer">
+                    <button class="timeline-btn timeline-btn-secondary timeline-close-btn">취소</button>
+                    <button class="timeline-btn timeline-btn-primary" id="timeline-generate-btn">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 타임라인 생성
+                    </button>
+                </div>
+            </div>
+        </div>
+    `);
+    
+    $('body').append(popup);
+    
+    // Event handlers
+    popup.find('.timeline-close-btn').on('click', () => popup.remove());
+    popup.find('.timeline-popup-overlay').on('click', (e) => {
+        if (e.target === e.currentTarget) popup.remove();
+    });
+    
+    // Mode toggle
+    popup.find('input[name="timeline-mode"]').on('change', function() {
+        const mode = $(this).val();
+        if (mode === 'main') {
+            popup.find('.timeline-main-options').show();
+            popup.find('.timeline-sub-options').hide();
+        } else {
+            popup.find('.timeline-main-options').hide();
+            popup.find('.timeline-sub-options').show();
+        }
+    });
+    
+    // Generate button
+    popup.find('#timeline-generate-btn').on('click', async () => {
+        const mode = popup.find('input[name="timeline-mode"]:checked').val();
+        const scanCount = parseInt(popup.find('#timeline-scan-count').val()) || 50;
+        
+        if (mode === 'main') {
+            const targetLorebook = popup.find('#timeline-target-lorebook').val();
+            if (!targetLorebook) {
+                toastr.warning('로어북을 선택해주세요!');
+                return;
+            }
+            await generateMainTimeline(targetLorebook, scanCount);
+        } else {
+            const newLorebookName = popup.find('#timeline-new-lorebook-name').val().trim();
+            if (!newLorebookName) {
+                toastr.warning('로어북 이름을 입력해주세요!');
+                return;
+            }
+            const autoKeywords = popup.find('#timeline-auto-keywords').is(':checked');
+            await generateSubTimeline(newLorebookName, scanCount, autoKeywords);
+        }
+        
+        popup.remove();
+    });
+}
+
+// =============================================================================
+// TIMELINE GENERATION
+// =============================================================================
+
+async function generateMainTimeline(targetLorebookName, scanCount) {
+    log('🕐 Generating MAIN timeline...', { targetLorebookName, scanCount });
+    
+    toastr.info('타임라인 생성 중...');
+    
+    try {
+        // 1. Get chat context
+        const chatContext = getChatContext(scanCount);
+        
+        // 2. Generate timeline via AI
+        const timelineContent = await generateTimelineViaAI(chatContext, 'main');
+        
+        if (!timelineContent) {
+            toastr.error('타임라인 생성 실패');
+            return;
+        }
+        
+        // 3. Add to existing lorebook as constant entry
+        await addToLorebook(targetLorebookName, {
+            comment: '📅 Main Timeline',
+            content: timelineContent,
+            constant: true,
+            selective: false,
+            key: [],
+            order: 100,
+            position: 4,
+            depth: 4,
+        });
+        
+        toastr.success('메인 타임라인이 생성되었습니다!');
+        log('🕐 Main timeline created successfully');
+        
+    } catch (error) {
+        log('❌ Error generating main timeline:', error);
+        toastr.error('타임라인 생성 중 오류 발생: ' + error.message);
+    }
+}
+
+async function generateSubTimeline(lorebookName, scanCount, autoKeywords) {
+    log('🕐 Generating SUB timeline...', { lorebookName, scanCount, autoKeywords });
+    
+    toastr.info('서브 타임라인 생성 중...');
+    
+    try {
+        // 1. Get chat context
+        const chatContext = getChatContext(scanCount);
+        
+        // 2. Generate timeline events via AI
+        const eventsData = await generateTimelineViaAI(chatContext, 'sub');
+        
+        if (!eventsData || !eventsData.events) {
+            toastr.error('타임라인 생성 실패');
+            return;
+        }
+        
+        // 3. Create new lorebook
+        const lorebookData = { entries: {} };
+        
+        // 4. Add each event as separate entry with keywords
+        for (let i = 0; i < eventsData.events.length; i++) {
+            const event = eventsData.events[i];
+            const uid = Date.now() + i;
+            
+            lorebookData.entries[uid] = {
+                uid: uid,
+                comment: `📅 ${event.title}`,
+                content: event.content,
+                constant: false,
+                selective: true,
+                key: event.keywords || [],
+                keysecondary: [],
+                order: 100 + i,
+                position: 4,
+                depth: 4,
+                scanDepth: 2,
+                caseSensitive: false,
+                matchWholeWords: false,
+                disable: false,
+                addMemo: true,
+                excludeRecursion: true,
+                preventRecursion: false,
+                probability: 100,
+                useProbability: true,
+                group: '',
+                groupOverride: false,
+                groupWeight: 100,
+            };
+        }
+        
+        // 5. Save lorebook
+        await saveWorldInfo(lorebookName, lorebookData);
+        await updateWorldInfoList();
+        
+        toastr.success(`서브 타임라인 생성 완료! (${eventsData.events.length}개 이벤트)`);
+        log('🕐 Sub timeline created successfully', { eventCount: eventsData.events.length });
+        
+    } catch (error) {
+        log('❌ Error generating sub timeline:', error);
+        toastr.error('타임라인 생성 중 오류 발생: ' + error.message);
+    }
+}
+
+// =============================================================================
+// CHAT CONTEXT EXTRACTION
+// =============================================================================
+
+function getChatContext(messageCount) {
+    const context = getContext();
+    const messages = chat?.slice(-messageCount) || [];
+    
+    log('🕐 Extracting chat context...', { totalMessages: chat?.length, extracting: messageCount });
+    
+    // Format messages for AI consumption
+    const formattedMessages = messages.map((msg, idx) => {
+        const speaker = msg.is_user ? 'User' : (msg.name || 'Character');
+        const content = msg.mes || '';
+        return `[${speaker}]: ${content}`;
+    }).join('\n\n');
+    
+    return {
+        messageCount: messages.length,
+        characterName: context.characters?.[context.characterId]?.name || 'Unknown',
+        formattedChat: formattedMessages,
+    };
+}
+
+// =============================================================================
+// AI GENERATION
+// =============================================================================
+
+async function generateTimelineViaAI(chatContext, mode) {
+    log('🕐 Requesting AI to generate timeline...', { mode });
+    
+    const mainPrompt = `You are a timeline summarizer. Analyze the following roleplay chat and create a chronological timeline.
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
+### **I. [Arc Title] ([Time Period])**
+*   **[Event Name] ([Date/Time]):**
+    *   **Event:** [What happened - detailed description]
+    *   **Result:** [The outcome and its significance]
+*   **[Next Event Name] ([Date/Time]):**
+    *   **Event:** [What happened]
+    *   **Result:** [The outcome]
+
+### **II. [Next Arc Title] ([Time Period])**
+[Continue same format...]
+
+RULES:
+- Group related events into numbered arcs (I, II, III...)
+- Each arc should have a dramatic title and time period
+- Include specific dates/times when mentioned
+- Write in past tense, narrative style
+- Capture emotional beats and relationship developments
+- Be detailed but concise
+
+CHAT LOG:
+${chatContext.formattedChat}`;
+
+    const subPrompt = `You are a timeline event extractor. Analyze the following roleplay chat and extract individual significant events.
+
+RESPOND IN THIS EXACT JSON FORMAT:
+{
+    "events": [
+        {
+            "title": "The First Encounter",
+            "content": "### **The First Encounter (Mid-May 2025)**\\n*   **Event:** [Detailed description]\\n*   **Result:** [Outcome]",
+            "keywords": ["first meeting", "첫 만남", "encounter", "The Sanctum"]
+        },
+        {
+            "title": "Event Title 2",
+            "content": "...",
+            "keywords": ["keyword1", "keyword2"]
+        }
+    ]
+}
+
+RULES:
+- Extract 3-10 significant events
+- Each event should be self-contained
+- Keywords should include English AND Korean variations
+- Keywords should be things characters might mention later
+- Include location names, character names, emotional keywords
+
+CHAT LOG:
+${chatContext.formattedChat}`;
+
+    const prompt = mode === 'main' ? mainPrompt : subPrompt;
+    
+    try {
+        // Use SillyTavern's generateRaw for AI completion
+        const response = await generateRaw(prompt, null, false, false);
+        
+        log('🕐 AI Response received', { length: response?.length });
+        
+        if (mode === 'sub') {
+            // Parse JSON response for sub timeline
+            try {
+                // Extract JSON from response (in case there's extra text)
+                const jsonMatch = response.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    return JSON.parse(jsonMatch[0]);
+                }
+            } catch (parseError) {
+                log('❌ Failed to parse AI response as JSON:', parseError);
+                return null;
+            }
+        }
+        
+        return response;
+        
+    } catch (error) {
+        log('❌ AI generation error:', error);
+        throw error;
+    }
+}
+
+// =============================================================================
+// LOREBOOK MANAGEMENT
+// =============================================================================
+
+async function addToLorebook(lorebookName, entryConfig) {
+    log('🕐 Adding entry to lorebook...', { lorebookName });
+    
+    // Load existing lorebook
+    const lorebookData = await loadWorldInfo(lorebookName);
+    
+    if (!lorebookData) {
+        throw new Error(`로어북 "${lorebookName}"을 찾을 수 없습니다.`);
+    }
+    
+    // Create new entry
+    const uid = Date.now();
+    lorebookData.entries[uid] = {
+        uid: uid,
+        comment: entryConfig.comment || 'Timeline Entry',
+        content: entryConfig.content || '',
+        constant: entryConfig.constant ?? false,
+        selective: entryConfig.selective ?? true,
+        key: entryConfig.key || [],
+        keysecondary: [],
+        order: entryConfig.order || 100,
+        position: entryConfig.position || 4,
+        depth: entryConfig.depth || 4,
+        scanDepth: entryConfig.scanDepth || null,
+        caseSensitive: false,
+        matchWholeWords: false,
+        disable: false,
+        addMemo: true,
+        excludeRecursion: true,
+        preventRecursion: false,
+        probability: 100,
+        useProbability: true,
+        group: '',
+        groupOverride: false,
+        groupWeight: 100,
+        // Additional ST fields
+        matchPersonaDescription: false,
+        matchCharacterDescription: false,
+        matchCharacterPersonality: false,
+        matchCharacterDepthPrompt: false,
+        matchScenario: false,
+        matchCreatorNotes: false,
+        delayUntilRecursion: false,
+        automationId: '',
+        sticky: 0,
+        cooldown: 0,
+        delay: 0,
+        displayIndex: Object.keys(lorebookData.entries).length,
+    };
+    
+    // Save lorebook
+    await saveWorldInfo(lorebookName, lorebookData);
+    await updateWorldInfoList();
+    
+    log('🕐 Entry added successfully', { uid });
+}
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+
+export {
+    showTimelinePopup,
+    generateMainTimeline,
+    generateSubTimeline,
+};
