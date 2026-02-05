@@ -128,10 +128,11 @@ async function showTimelinePopup() {
     
     const context = getContext();
     const chatLength = chat?.length || 0;
+    const lastMsgId = chatLength > 0 ? chatLength - 1 : 0;
     
     // Get available lorebooks for dropdown
     const lorebookOptions = world_names.map(name => 
-        `<option value="${name}" ${name === extension_settings[EXTENSION_NAME].mainLorebookName ? 'selected' : ''}>${name}</option>`
+        `<option value="${name}">${name}</option>`
     ).join('');
     
     const popup = $(`
@@ -147,42 +148,42 @@ async function showTimelinePopup() {
                     <div class="timeline-status">
                         <div class="timeline-status-item">
                             <i class="fa-solid fa-comments"></i>
-                            <span>채팅 메시지: <strong>${chatLength}</strong>개</span>
+                            <span>채팅 메시지: <strong>${chatLength}</strong>개 (ID: 0 ~ ${lastMsgId})</span>
                         </div>
                     </div>
                     
-                    <!-- Mode Selection -->
+                    <!-- Step 1: Mode Selection -->
                     <div class="timeline-section">
-                        <h4>타임라인 타입</h4>
+                        <h4>① 타임라인 타입</h4>
                         <div class="timeline-mode-options">
                             <label class="timeline-mode-option">
                                 <input type="radio" name="timeline-mode" value="main" checked>
                                 <div class="timeline-mode-card">
-                                    <i class="fa-solid fa-book"></i>
+                                    <i class="fa-solid fa-file-lines"></i>
                                     <div>
                                         <strong>메인 타임라인</strong>
-                                        <span>전체 스토리를 기존 로어북에 추가 (Constant)</span>
+                                        <span>기존 엔트리 content 아래에 이어붙이기 (Constant)</span>
                                     </div>
                                 </div>
                             </label>
                             <label class="timeline-mode-option">
                                 <input type="radio" name="timeline-mode" value="sub">
                                 <div class="timeline-mode-card">
-                                    <i class="fa-solid fa-bookmark"></i>
+                                    <i class="fa-solid fa-plus"></i>
                                     <div>
                                         <strong>서브 타임라인</strong>
-                                        <span>개별 이벤트를 새 로어북으로 (Selective + 키워드)</span>
+                                        <span>로어북에 새 엔트리 추가 (Selective + 키워드)</span>
                                     </div>
                                 </div>
                             </label>
                         </div>
                     </div>
                     
-                    <!-- Main Timeline Options -->
-                    <div class="timeline-section timeline-main-options">
-                        <h4>메인 타임라인 설정</h4>
+                    <!-- Step 2: Lorebook Selection (Common) -->
+                    <div class="timeline-section">
+                        <h4>② 로어북 선택</h4>
                         <div class="timeline-form-group">
-                            <label>추가할 로어북 선택</label>
+                            <label>대상 로어북</label>
                             <select id="timeline-target-lorebook" class="timeline-select">
                                 <option value="">-- 로어북 선택 --</option>
                                 ${lorebookOptions}
@@ -190,12 +191,24 @@ async function showTimelinePopup() {
                         </div>
                     </div>
                     
-                    <!-- Sub Timeline Options -->
-                    <div class="timeline-section timeline-sub-options" style="display: none;">
-                        <h4>서브 타임라인 설정</h4>
+                    <!-- Step 3: Entry Selection (Main only) -->
+                    <div class="timeline-section timeline-main-options">
+                        <h4>③ 엔트리 선택</h4>
                         <div class="timeline-form-group">
-                            <label>새 로어북 이름</label>
-                            <input type="text" id="timeline-new-lorebook-name" class="timeline-input" placeholder="Timeline_Events">
+                            <label>붙여넣을 엔트리</label>
+                            <select id="timeline-target-entry" class="timeline-select">
+                                <option value="">-- 먼저 로어북을 선택하세요 --</option>
+                            </select>
+                            <span class="timeline-hint">선택한 엔트리의 content 아래에 타임라인이 추가됩니다</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 3: New Entry Options (Sub only) -->
+                    <div class="timeline-section timeline-sub-options" style="display: none;">
+                        <h4>③ 새 엔트리 설정</h4>
+                        <div class="timeline-form-group">
+                            <label>엔트리 이름 (comment)</label>
+                            <input type="text" id="timeline-entry-name" class="timeline-input" placeholder="📅 Timeline Event">
                         </div>
                         <div class="timeline-form-group">
                             <label>
@@ -205,14 +218,15 @@ async function showTimelinePopup() {
                         </div>
                     </div>
                     
-                    <!-- Scan Range -->
+                    <!-- Step 4: Message Range -->
                     <div class="timeline-section">
-                        <h4>스캔 범위</h4>
-                        <div class="timeline-form-group">
-                            <label>최근 메시지 수</label>
-                            <input type="number" id="timeline-scan-count" class="timeline-input" value="${Math.min(chatLength, 50)}" min="1" max="${chatLength}">
-                            <span class="timeline-hint">전체 ${chatLength}개 중</span>
+                        <h4>④ 메시지 범위 (ID)</h4>
+                        <div class="timeline-form-group" style="display: flex; gap: 10px; align-items: center;">
+                            <input type="number" id="timeline-start-id" class="timeline-input" placeholder="시작 ID" value="0" min="0" max="${lastMsgId}" style="flex: 1;">
+                            <span>~</span>
+                            <input type="number" id="timeline-end-id" class="timeline-input" placeholder="끝 ID" value="${lastMsgId}" min="0" max="${lastMsgId}" style="flex: 1;">
                         </div>
+                        <span class="timeline-hint">전체 범위: 0 ~ ${lastMsgId}</span>
                     </div>
                 </div>
                 
@@ -246,26 +260,63 @@ async function showTimelinePopup() {
         }
     });
     
+    // Lorebook selection -> Load entries
+    popup.find('#timeline-target-lorebook').on('change', async function() {
+        const lorebookName = $(this).val();
+        const entrySelect = popup.find('#timeline-target-entry');
+        
+        if (!lorebookName) {
+            entrySelect.html('<option value="">-- 먼저 로어북을 선택하세요 --</option>');
+            return;
+        }
+        
+        try {
+            const lorebookData = await loadWorldInfo(lorebookName);
+            const entries = lorebookData?.entries || {};
+            
+            let entryOptions = '<option value="">-- 엔트리 선택 --</option>';
+            for (const [uid, entry] of Object.entries(entries)) {
+                const comment = entry.comment || `Entry ${uid}`;
+                const preview = (entry.content || '').substring(0, 50).replace(/\n/g, ' ');
+                entryOptions += `<option value="${uid}">${comment} (${preview}...)</option>`;
+            }
+            
+            entrySelect.html(entryOptions);
+            log('🕐 Loaded entries for lorebook:', lorebookName, Object.keys(entries).length);
+        } catch (error) {
+            log('❌ Failed to load lorebook entries:', error);
+            entrySelect.html('<option value="">-- 로드 실패 --</option>');
+        }
+    });
+    
     // Generate button
     popup.find('#timeline-generate-btn').on('click', async () => {
         const mode = popup.find('input[name="timeline-mode"]:checked').val();
-        const scanCount = parseInt(popup.find('#timeline-scan-count').val()) || 50;
+        const targetLorebook = popup.find('#timeline-target-lorebook').val();
+        const startId = parseInt(popup.find('#timeline-start-id').val()) || 0;
+        const endId = parseInt(popup.find('#timeline-end-id').val()) || lastMsgId;
+        
+        if (!targetLorebook) {
+            toastr.warning('로어북을 선택해주세요!');
+            return;
+        }
+        
+        if (startId > endId) {
+            toastr.warning('시작 ID가 끝 ID보다 큽니다!');
+            return;
+        }
         
         if (mode === 'main') {
-            const targetLorebook = popup.find('#timeline-target-lorebook').val();
-            if (!targetLorebook) {
-                toastr.warning('로어북을 선택해주세요!');
+            const targetEntry = popup.find('#timeline-target-entry').val();
+            if (!targetEntry) {
+                toastr.warning('엔트리를 선택해주세요!');
                 return;
             }
-            await generateMainTimeline(targetLorebook, scanCount);
+            await generateMainTimeline(targetLorebook, targetEntry, startId, endId);
         } else {
-            const newLorebookName = popup.find('#timeline-new-lorebook-name').val().trim();
-            if (!newLorebookName) {
-                toastr.warning('로어북 이름을 입력해주세요!');
-                return;
-            }
+            const entryName = popup.find('#timeline-entry-name').val().trim() || '📅 Timeline Event';
             const autoKeywords = popup.find('#timeline-auto-keywords').is(':checked');
-            await generateSubTimeline(newLorebookName, scanCount, autoKeywords);
+            await generateSubTimeline(targetLorebook, entryName, startId, endId, autoKeywords);
         }
         
         popup.remove();
@@ -276,14 +327,14 @@ async function showTimelinePopup() {
 // TIMELINE GENERATION
 // =============================================================================
 
-async function generateMainTimeline(targetLorebookName, scanCount) {
-    log('🕐 Generating MAIN timeline...', { targetLorebookName, scanCount });
+async function generateMainTimeline(lorebookName, entryUid, startId, endId) {
+    log('🕐 Generating MAIN timeline...', { lorebookName, entryUid, startId, endId });
     
     toastr.info('타임라인 생성 중...');
     
     try {
-        // 1. Get chat context
-        const chatContext = getChatContext(scanCount);
+        // 1. Get chat context by ID range
+        const chatContext = getChatContextByRange(startId, endId);
         
         // 2. Generate timeline via AI
         const timelineContent = await generateTimelineViaAI(chatContext, 'main');
@@ -293,20 +344,24 @@ async function generateMainTimeline(targetLorebookName, scanCount) {
             return;
         }
         
-        // 3. Add to existing lorebook as constant entry
-        await addToLorebook(targetLorebookName, {
-            comment: '📅 Main Timeline',
-            content: timelineContent,
-            constant: true,
-            selective: false,
-            key: [],
-            order: 100,
-            position: 4,
-            depth: 4,
-        });
+        // 3. Load lorebook and find target entry
+        const lorebookData = await loadWorldInfo(lorebookName);
+        if (!lorebookData || !lorebookData.entries[entryUid]) {
+            toastr.error('엔트리를 찾을 수 없습니다');
+            return;
+        }
         
-        toastr.success('메인 타임라인이 생성되었습니다!');
-        log('🕐 Main timeline created successfully');
+        // 4. Append to existing entry content
+        const entry = lorebookData.entries[entryUid];
+        const separator = '\n\n---\n\n';
+        entry.content = entry.content + separator + timelineContent;
+        
+        // 5. Save lorebook
+        await saveWorldInfo(lorebookName, lorebookData);
+        await updateWorldInfoList();
+        
+        toastr.success('메인 타임라인이 추가되었습니다!');
+        log('🕐 Main timeline appended successfully');
         
     } catch (error) {
         log('❌ Error generating main timeline:', error);
@@ -314,63 +369,78 @@ async function generateMainTimeline(targetLorebookName, scanCount) {
     }
 }
 
-async function generateSubTimeline(lorebookName, scanCount, autoKeywords) {
-    log('🕐 Generating SUB timeline...', { lorebookName, scanCount, autoKeywords });
+async function generateSubTimeline(lorebookName, entryName, startId, endId, autoKeywords) {
+    log('🕐 Generating SUB timeline...', { lorebookName, entryName, startId, endId, autoKeywords });
     
     toastr.info('서브 타임라인 생성 중...');
     
     try {
-        // 1. Get chat context
-        const chatContext = getChatContext(scanCount);
+        // 1. Get chat context by ID range
+        const chatContext = getChatContextByRange(startId, endId);
         
         // 2. Generate timeline events via AI
-        const eventsData = await generateTimelineViaAI(chatContext, 'sub');
+        const eventData = await generateTimelineViaAI(chatContext, 'sub');
         
-        if (!eventsData || !eventsData.events) {
+        if (!eventData) {
             toastr.error('타임라인 생성 실패');
             return;
         }
         
-        // 3. Create new lorebook
-        const lorebookData = { entries: {} };
-        
-        // 4. Add each event as separate entry with keywords
-        for (let i = 0; i < eventsData.events.length; i++) {
-            const event = eventsData.events[i];
-            const uid = Date.now() + i;
-            
-            lorebookData.entries[uid] = {
-                uid: uid,
-                comment: `📅 ${event.title}`,
-                content: event.content,
-                constant: false,
-                selective: true,
-                key: event.keywords || [],
-                keysecondary: [],
-                order: 100 + i,
-                position: 4,
-                depth: 4,
-                scanDepth: 2,
-                caseSensitive: false,
-                matchWholeWords: false,
-                disable: false,
-                addMemo: true,
-                excludeRecursion: true,
-                preventRecursion: false,
-                probability: 100,
-                useProbability: true,
-                group: '',
-                groupOverride: false,
-                groupWeight: 100,
-            };
+        // 3. Load existing lorebook
+        const lorebookData = await loadWorldInfo(lorebookName);
+        if (!lorebookData) {
+            toastr.error('로어북을 찾을 수 없습니다');
+            return;
         }
+        
+        // 4. Create new entry
+        const uid = Date.now();
+        const keywords = autoKeywords ? (eventData.keywords || []) : [];
+        
+        lorebookData.entries[uid] = {
+            uid: uid,
+            comment: entryName,
+            content: eventData.content || eventData,
+            constant: false,
+            selective: true,
+            key: keywords,
+            keysecondary: [],
+            order: 100,
+            position: 4,
+            depth: 4,
+            scanDepth: 2,
+            caseSensitive: false,
+            matchWholeWords: false,
+            disable: false,
+            addMemo: true,
+            excludeRecursion: true,
+            preventRecursion: false,
+            probability: 100,
+            useProbability: true,
+            group: '',
+            groupOverride: false,
+            groupWeight: 100,
+            matchPersonaDescription: false,
+            matchCharacterDescription: false,
+            matchCharacterPersonality: false,
+            matchCharacterDepthPrompt: false,
+            matchScenario: false,
+            matchCreatorNotes: false,
+            delayUntilRecursion: false,
+            automationId: '',
+            sticky: 0,
+            cooldown: 0,
+            delay: 0,
+            displayIndex: Object.keys(lorebookData.entries).length,
+        };
         
         // 5. Save lorebook
         await saveWorldInfo(lorebookName, lorebookData);
         await updateWorldInfoList();
         
-        toastr.success(`서브 타임라인 생성 완료! (${eventsData.events.length}개 이벤트)`);
-        log('🕐 Sub timeline created successfully', { eventCount: eventsData.events.length });
+        const keywordText = keywords.length > 0 ? ` (키워드: ${keywords.join(', ')})` : '';
+        toastr.success(`서브 타임라인 생성 완료!${keywordText}`);
+        log('🕐 Sub timeline created successfully', { uid, keywords });
         
     } catch (error) {
         log('❌ Error generating sub timeline:', error);
@@ -382,20 +452,25 @@ async function generateSubTimeline(lorebookName, scanCount, autoKeywords) {
 // CHAT CONTEXT EXTRACTION
 // =============================================================================
 
-function getChatContext(messageCount) {
+function getChatContextByRange(startId, endId) {
     const context = getContext();
-    const messages = chat?.slice(-messageCount) || [];
     
-    log('🕐 Extracting chat context...', { totalMessages: chat?.length, extracting: messageCount });
+    // Slice chat by ID range (inclusive)
+    const messages = chat?.slice(startId, endId + 1) || [];
+    
+    log('🕐 Extracting chat context by range...', { startId, endId, extracted: messages.length });
     
     // Format messages for AI consumption
     const formattedMessages = messages.map((msg, idx) => {
+        const actualId = startId + idx;
         const speaker = msg.is_user ? 'User' : (msg.name || 'Character');
         const content = msg.mes || '';
-        return `[${speaker}]: ${content}`;
+        return `[#${actualId}] [${speaker}]: ${content}`;
     }).join('\n\n');
     
     return {
+        startId: startId,
+        endId: endId,
         messageCount: messages.length,
         characterName: context.characters?.[context.characterId]?.name || 'Unknown',
         formattedChat: formattedMessages,
@@ -407,7 +482,7 @@ function getChatContext(messageCount) {
 // =============================================================================
 
 async function generateTimelineViaAI(chatContext, mode) {
-    log('🕐 Requesting AI to generate timeline...', { mode });
+    log('🕐 Requesting AI to generate timeline...', { mode, messageCount: chatContext.messageCount });
     
     const mainPrompt = `You are a timeline summarizer. Analyze the following roleplay chat and create a chronological timeline.
 
@@ -432,35 +507,25 @@ RULES:
 - Capture emotional beats and relationship developments
 - Be detailed but concise
 
-CHAT LOG:
+CHAT LOG (Message ID ${chatContext.startId} ~ ${chatContext.endId}):
 ${chatContext.formattedChat}`;
 
-    const subPrompt = `You are a timeline event extractor. Analyze the following roleplay chat and extract individual significant events.
+    const subPrompt = `You are a timeline event extractor. Analyze the following roleplay chat and summarize it as a single timeline event.
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {
-    "events": [
-        {
-            "title": "The First Encounter",
-            "content": "### **The First Encounter (Mid-May 2025)**\\n*   **Event:** [Detailed description]\\n*   **Result:** [Outcome]",
-            "keywords": ["first meeting", "첫 만남", "encounter", "The Sanctum"]
-        },
-        {
-            "title": "Event Title 2",
-            "content": "...",
-            "keywords": ["keyword1", "keyword2"]
-        }
-    ]
+    "content": "### **[Event Title] ([Date/Time])**\\n*   **Event:** [Detailed description of what happened]\\n*   **Result:** [The outcome and significance]",
+    "keywords": ["keyword1", "keyword2", "키워드1", "키워드2"]
 }
 
 RULES:
-- Extract 3-10 significant events
-- Each event should be self-contained
+- Summarize the entire chat segment as ONE coherent event
 - Keywords should include English AND Korean variations
-- Keywords should be things characters might mention later
-- Include location names, character names, emotional keywords
+- Keywords: character names, location names, emotional keywords, key actions
+- Keep keywords relevant for future reference triggers
+- 4-8 keywords recommended
 
-CHAT LOG:
+CHAT LOG (Message ID ${chatContext.startId} ~ ${chatContext.endId}):
 ${chatContext.formattedChat}`;
 
     const prompt = mode === 'main' ? mainPrompt : subPrompt;
@@ -474,14 +539,15 @@ ${chatContext.formattedChat}`;
         if (mode === 'sub') {
             // Parse JSON response for sub timeline
             try {
-                // Extract JSON from response (in case there's extra text)
                 const jsonMatch = response.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                     return JSON.parse(jsonMatch[0]);
                 }
+                // If JSON parse fails, return raw content
+                return { content: response, keywords: [] };
             } catch (parseError) {
-                log('❌ Failed to parse AI response as JSON:', parseError);
-                return null;
+                log('⚠️ JSON parse failed, using raw content:', parseError);
+                return { content: response, keywords: [] };
             }
         }
         
@@ -491,67 +557,6 @@ ${chatContext.formattedChat}`;
         log('❌ AI generation error:', error);
         throw error;
     }
-}
-
-// =============================================================================
-// LOREBOOK MANAGEMENT
-// =============================================================================
-
-async function addToLorebook(lorebookName, entryConfig) {
-    log('🕐 Adding entry to lorebook...', { lorebookName });
-    
-    // Load existing lorebook
-    const lorebookData = await loadWorldInfo(lorebookName);
-    
-    if (!lorebookData) {
-        throw new Error(`로어북 "${lorebookName}"을 찾을 수 없습니다.`);
-    }
-    
-    // Create new entry
-    const uid = Date.now();
-    lorebookData.entries[uid] = {
-        uid: uid,
-        comment: entryConfig.comment || 'Timeline Entry',
-        content: entryConfig.content || '',
-        constant: entryConfig.constant ?? false,
-        selective: entryConfig.selective ?? true,
-        key: entryConfig.key || [],
-        keysecondary: [],
-        order: entryConfig.order || 100,
-        position: entryConfig.position || 4,
-        depth: entryConfig.depth || 4,
-        scanDepth: entryConfig.scanDepth || null,
-        caseSensitive: false,
-        matchWholeWords: false,
-        disable: false,
-        addMemo: true,
-        excludeRecursion: true,
-        preventRecursion: false,
-        probability: 100,
-        useProbability: true,
-        group: '',
-        groupOverride: false,
-        groupWeight: 100,
-        // Additional ST fields
-        matchPersonaDescription: false,
-        matchCharacterDescription: false,
-        matchCharacterPersonality: false,
-        matchCharacterDepthPrompt: false,
-        matchScenario: false,
-        matchCreatorNotes: false,
-        delayUntilRecursion: false,
-        automationId: '',
-        sticky: 0,
-        cooldown: 0,
-        delay: 0,
-        displayIndex: Object.keys(lorebookData.entries).length,
-    };
-    
-    // Save lorebook
-    await saveWorldInfo(lorebookName, lorebookData);
-    await updateWorldInfoList();
-    
-    log('🕐 Entry added successfully', { uid });
 }
 
 // =============================================================================
